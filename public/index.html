@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>svc-web</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/runtime-config.js"></script>
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="panel">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Service</p>
+            <h1>svc-web</h1>
+          </div>
+          <span class="status" data-status>starting</span>
+        </header>
+
+        <p>Version: <span data-version>dev</span></p>
+
+        <div class="actions">
+          <button type="button" data-refresh>Refresh status</button>
+        </div>
+
+        <pre class="output" data-output>{}</pre>
+      </section>
+    </main>
+  </body>
+</html>
