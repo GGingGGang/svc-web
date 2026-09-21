@@ -40,7 +40,8 @@ test("browser helpers read config and format service status", async () => {
   const { readConfig, statusText } = await import("../public/app.js");
   assert.deepEqual(readConfig({ serviceName: "svc-web", version: "abc123" }), {
     serviceName: "svc-web",
-    version: "abc123"
+    version: "abc123",
+    authBasePath: "/v1/auth"
   });
   assert.equal(statusText({ status: "ready" }), "ready");
   assert.equal(statusText({}), "unknown");

@@ -52,10 +52,22 @@ npm run dev
 | 환경변수 | 기본값 | 설명 |
 | --- | --- | --- |
 | `APP_VERSION` | Docker `GIT_SHA` | `/runtime-config.js`에 기록할 버전 |
+| `AUTH_BASE_PATH` | `/v1/auth` | Gateway가 auth API에 연결하는 same-origin 경로 |
 
 nginx는 고정 설정 파일을 사용하며, 브라우저의 버전 정보는 컨테이너 시작 시 `/tmp` 아래에 기록됩니다. Kubernetes 매니페스트는 `readOnlyRootFilesystem: true`, 비특권 UID/GID 101, `/tmp` `emptyDir` 마운트를 사용합니다.
 
 이 정적 웹 템플릿에는 Prometheus exporter가 없어 `/metrics`와 ServiceMonitor는 포함하지 않습니다.
+
+## 3.1 인증
+
+브라우저는 기존 auth REST 계약을 same-origin Gateway 경로로 호출합니다. `AUTH_BASE_PATH`의 기본값은 `/v1/auth`이며, 컨테이너 시작 시 다른 same-origin 경로로 설정할 수 있습니다.
+
+- 회원가입은 `email`, `password`, `display_name`, `timezone`을 `/register`로 보낸 뒤 자동 로그인합니다.
+- 로그인으로 받은 access/refresh 토큰 쌍은 탭 한정 `sessionStorage`에만 보관합니다.
+- 탭을 다시 열면 `/refresh`로 토큰 쌍을 회전합니다. 401 응답이면 로컬 세션을 제거합니다.
+- 로그아웃은 `/logout`에 refresh 토큰을 보내 family를 폐기하고, 항상 로컬 토큰도 제거합니다.
+
+현재 auth 계약은 refresh 토큰을 JSON 본문으로 전달하므로, 클라이언트는 영속 브라우저 저장소를 사용하지 않습니다. 이후 일정 API 화면은 `AuthClient#getAccessToken()` 값으로 Bearer 헤더를 만들 수 있습니다.
 
 ## 4. Docker 확인
 

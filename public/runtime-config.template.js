@@ -1,4 +1,5 @@
 window.appConfig = {
   serviceName: "web",
-  version: "dev"
+  version: "dev",
+  authBasePath: "/v1/auth"
 };
