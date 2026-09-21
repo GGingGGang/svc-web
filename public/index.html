@@ -9,7 +9,12 @@
     <script type="module" src="/app.js"></script>
   </head>
   <body>
-    <main class="shell">
+    <main class="auth-page" data-auth-anonymous>
+      <section class="auth-intro">
+        <a class="wordmark" href="#">P<span>•</span>lanned</a>
+        <div class="intro-copy"><p class="eyebrow">YOUR TIME, IN FOCUS</p><h1>Make time<br />feel clear.</h1><p>Keep appointments and plans in one calm place, then focus on what comes next.</p></div>
+        <p class="intro-foot">Plan lightly. Remember what matters.</p>
+      </section>
       <section class="panel">
         <header class="topbar">
           <div>
@@ -55,6 +60,10 @@
 
         <pre class="output" data-output>{}</pre>
       </section>
+    </main>
+    <main class="app-shell" data-authenticated hidden>
+      <aside class="sidebar"><a class="wordmark" href="#dashboard">P<span>•</span>lanned</a><nav aria-label="Main navigation"><a class="nav-link active" href="#dashboard" data-route="dashboard"><i>⌂</i> Dashboard</a><a class="nav-link" href="#schedules" data-route="schedules"><i>□</i> All schedules</a><a class="nav-link" href="#create" data-route="create"><i>＋</i> New schedule</a></nav><div class="sidebar-bottom"><p class="version">v<span data-version>dev</span></p><p class="inspiration">Navigation inspired by <a href="https://github.com/puikinsh/Adminator-admin-dashboard">Adminator v4</a> (MIT). Planned's visual design and code are independently authored.</p></div></aside>
+      <section class="workspace"><header class="app-topbar"><button class="mobile-menu" type="button" data-menu-toggle aria-label="Open menu">☰</button><div class="crumb"><span data-page-kicker>OVERVIEW</span><strong data-page-title>Good morning</strong></div><div class="top-actions"><span class="health-dot" data-status title="Service status"></span><button class="theme-button" type="button" data-theme-toggle aria-label="Toggle theme">◐</button><button class="avatar" type="button" data-logout title="Log out">P</button></div></header><div class="content" data-view></div></section>
     </main>
   </body>
 </html>
