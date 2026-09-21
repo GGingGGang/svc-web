@@ -11,6 +11,9 @@ test("static shell keeps runtime configuration external", async () => {
   const html = await readFile(join(root, "public", "index.html"), "utf8");
   assert.match(html, /runtime-config\.js/);
   assert.match(html, /type="module" src="\/app\.js"/);
+  assert.match(html, /data-auth-message/);
+  assert.match(html, /data-view/);
+  assert.doesNotMatch(html, /mini-calendar/);
 });
 
 test("nginx exposes its own probes", async () => {

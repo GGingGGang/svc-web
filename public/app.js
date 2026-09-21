@@ -169,6 +169,7 @@ function readForm(form) {
   return Object.fromEntries(new FormData(form));
 }
 
+/* Legacy dashboard replaced by the live schedule shell below.
 function setMessage(element, message, type = "") {
   element.textContent = message;
   element.className = `notice${type ? ` ${type}` : ""}`;
@@ -303,5 +304,127 @@ function initDashboard() {
   timezoneEl.value = getBrowserTimezone(); versionEls.forEach((element) => element.textContent = config.version); applyTheme(localStorage.getItem("svc-web.theme") || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")); document.querySelectorAll("[data-theme-toggle]").forEach((button) => button.addEventListener("click", () => applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"))); document.querySelectorAll("[data-menu-toggle]").forEach((button) => button.addEventListener("click", () => authenticatedEl.classList.toggle("menu-open")));
   document.querySelector("[data-login-form]").addEventListener("submit", async (event) => { event.preventDefault(); try { await client.login(readForm(event.currentTarget)); setMessage("Signed in successfully.", "success"); await updateAuthUi(); } catch (error) { setMessage(error.message, "error"); } }); document.querySelector("[data-register-form]").addEventListener("submit", async (event) => { event.preventDefault(); const fields = readForm(event.currentTarget); try { await client.register(fields); await client.login({ email:fields.email, password:fields.password }); setMessage("Your account is ready.", "success"); await updateAuthUi(); } catch (error) { setMessage(error.message, "error"); } }); document.querySelectorAll("[data-logout]").forEach((button) => button.addEventListener("click", async () => { await client.logout(); updateAuthUi(); })); window.addEventListener("hashchange", render); getServiceHealth().then((payload) => statusEls.forEach((element) => { element.classList.toggle("ready", payload.status === "ready"); element.title = statusText(payload); })); updateAuthUi();
 }
+*/
 
-if (typeof document !== "undefined") initDashboard();
+if (typeof document !== "undefined") initWebUi();
+
+// The live UI is intentionally small: one shell and the two API flows this app owns.
+function webEscapeHtml(value = "") { return String(value).replace(/[&<>"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[character]); }
+
+function scheduleDate(schedule) {
+  const date = new Date(schedule.start_at);
+  return new Intl.DateTimeFormat("ko-KR", { month: "short", day: "numeric" }).format(date);
+}
+
+function scheduleTime(schedule) {
+  if (schedule.all_day) return "하루 종일";
+  return new Intl.DateTimeFormat("ko-KR", { hour: "numeric", minute: "2-digit" }).format(new Date(schedule.start_at));
+}
+
+function scheduleItem(schedule) {
+  return `<li class="schedule-item"><span class="schedule-date">${scheduleDate(schedule)}</span><div><strong>${webEscapeHtml(schedule.title)}</strong><p>${webEscapeHtml(schedule.location || "장소 없음")}</p></div><span class="schedule-time">${scheduleTime(schedule)}</span></li>`;
+}
+
+function apiError(message) {
+  return `<div class="api-error"><p>${webEscapeHtml(message)}</p><button type="button" class="button button-secondary" data-reload>다시 시도</button></div>`;
+}
+
+function emptySchedules() {
+  return `<div class="empty"><strong>아직 일정이 없습니다.</strong><span>첫 일정을 추가하면 여기에서 확인할 수 있어요.</span></div>`;
+}
+
+function webDashboardView(schedules, error) {
+  return `<div class="view-head"><div><h1>내 일정</h1><p>다가오는 일정만 간단히 보여드립니다.</p></div><a class="button button-primary" href="#create">일정 만들기</a></div>${error ? apiError(error) : ""}<section class="card"><div class="card-header"><div><h2>다가오는 일정</h2><p>Core API에서 가져온 실제 일정입니다.</p></div><a href="#schedules">전체 보기</a></div>${schedules.length ? `<ul class="schedule-list">${schedules.slice(0, 5).map(scheduleItem).join("")}</ul>` : emptySchedules()}</section>`;
+}
+
+function webSchedulesView(schedules, error) {
+  const rows = schedules.map((schedule) => `<tr><td><strong>${webEscapeHtml(schedule.title)}</strong></td><td>${scheduleDate(schedule)} ${scheduleTime(schedule)}</td><td>${webEscapeHtml(schedule.location || "-")}</td><td><span class="tag">${webEscapeHtml(schedule.status || "confirmed")}</span></td></tr>`).join("");
+  return `<div class="view-head"><div><h1>모든 일정</h1><p>Core API에서 관리되는 내 일정입니다.</p></div><a class="button button-primary" href="#create">일정 만들기</a></div>${error ? apiError(error) : ""}<section class="card table-wrap">${schedules.length ? `<table><thead><tr><th>제목</th><th>일시</th><th>장소</th><th>상태</th></tr></thead><tbody>${rows}</tbody></table>` : emptySchedules()}</section>`;
+}
+
+function webCreateView(message = "") {
+  const localNow = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  return `<div class="view-head"><div><h1>일정 만들기</h1><p>저장하면 Core API에 바로 반영됩니다.</p></div></div>${message ? `<div class="api-error"><p>${webEscapeHtml(message)}</p></div>` : ""}<form class="card schedule-form" data-schedule-form><div class="form-grid"><label>제목<input name="title" maxlength="255" required placeholder="팀 회의" /></label><label>시작 시간<input name="start_at" type="datetime-local" value="${localNow}" required /></label></div><div class="form-grid"><label>장소<input name="location" maxlength="255" placeholder="온라인 또는 장소" /></label><label>상태<select name="status"><option value="confirmed">확정</option><option value="tentative">미정</option><option value="cancelled">취소</option></select></label></div><label>설명<textarea name="description" placeholder="선택 사항"></textarea></label><div class="form-actions"><a class="button button-secondary" href="#schedules">취소</a><button type="submit" class="button button-primary">일정 저장</button></div></form>`;
+}
+
+function setBusy(form, busy, text) {
+  const button = form.querySelector("button[type=submit]");
+  if (!button) return;
+  if (!button.dataset.label) button.dataset.label = button.textContent;
+  button.disabled = busy;
+  button.textContent = busy ? text : button.dataset.label;
+}
+
+function initWebUi() {
+  const config = readConfig();
+  const auth = new AuthClient({ config });
+  const schedules = new ScheduleClient({ config, authClient: auth });
+  const anonymous = document.querySelector("[data-auth-anonymous]");
+  const application = document.querySelector("[data-authenticated]");
+  const feedback = document.querySelector("[data-auth-message]");
+  const view = document.querySelector("[data-view]");
+  const titles = { dashboard: ["개요", "내 일정"], schedules: ["일정", "모든 일정"], create: ["새 일정", "일정 만들기"] };
+  let scheduleData = [];
+  let scheduleError = "";
+  let createError = "";
+
+  const setFeedback = (message, type = "") => { feedback.textContent = message; feedback.className = `feedback${type ? ` ${type}` : ""}`; };
+  const setMode = (mode) => {
+    const registering = mode === "register";
+    document.querySelector("[data-login-form]").hidden = registering;
+    document.querySelector("[data-register-form]").hidden = !registering;
+    document.querySelectorAll("[data-auth-mode]").forEach((button) => { const active = button.dataset.authMode === mode; button.classList.toggle("active", active); button.setAttribute("aria-selected", String(active)); });
+    document.querySelector("[data-auth-title]").textContent = registering ? "계정을 만들어요" : "다시 만나서 반가워요";
+    document.querySelector("[data-auth-subtitle]").textContent = registering ? "일정을 저장할 새 계정을 만드세요." : "계속하려면 로그인하세요.";
+    setFeedback(registering ? "가입 후 바로 로그인됩니다." : "API Gateway로 안전하게 연결합니다.");
+  };
+  const render = () => {
+    const route = location.hash.slice(1) || "dashboard";
+    const current = titles[route] ? route : "dashboard";
+    document.querySelectorAll("[data-route]").forEach((link) => link.classList.toggle("active", link.dataset.route === current));
+    document.querySelector("[data-page-kicker]").textContent = titles[current][0];
+    document.querySelector("[data-page-title]").textContent = titles[current][1];
+    view.innerHTML = current === "schedules" ? webSchedulesView(scheduleData, scheduleError) : current === "create" ? webCreateView(createError) : webDashboardView(scheduleData, scheduleError);
+    view.querySelector("[data-reload]")?.addEventListener("click", loadSchedules);
+    view.querySelector("[data-schedule-form]")?.addEventListener("submit", saveSchedule);
+  };
+  const loadSchedules = async () => {
+    scheduleError = "";
+    try { scheduleData = await schedules.list({ from: new Date().toISOString() }); }
+    catch (error) { scheduleData = []; scheduleError = `일정을 불러오지 못했습니다. API Gateway 연결을 확인한 뒤 다시 시도하세요. (${error.message})`; }
+    render();
+  };
+  const openApp = async () => {
+    anonymous.hidden = true;
+    application.hidden = false;
+    try { await auth.refresh(); }
+    catch (error) { auth.clear(); anonymous.hidden = false; application.hidden = true; setFeedback(error.message, "error"); return; }
+    await loadSchedules();
+  };
+  const saveSchedule = async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const values = Object.fromEntries(new FormData(form));
+    setBusy(form, true, "저장 중…");
+    try {
+      await schedules.create({ title: values.title, start_at: new Date(values.start_at).toISOString(), location: values.location || null, description: values.description || null, status: values.status, all_day: false, source: "manual" });
+      createError = "";
+      location.hash = "#schedules";
+      await loadSchedules();
+    } catch (error) { createError = `일정을 저장하지 못했습니다. ${error.message}`; setBusy(form, false); render(); }
+  };
+
+  document.querySelector("[data-timezone]").value = getBrowserTimezone();
+  document.querySelectorAll("[data-version]").forEach((element) => { element.textContent = config.version; });
+  const theme = localStorage.getItem("svc-web.theme") || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  document.documentElement.dataset.theme = theme;
+  document.querySelector("[data-theme-toggle]").addEventListener("click", () => { const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark"; document.documentElement.dataset.theme = next; localStorage.setItem("svc-web.theme", next); });
+  document.querySelector("[data-menu-toggle]").addEventListener("click", () => application.classList.toggle("menu-open"));
+  document.querySelectorAll("[data-auth-mode]").forEach((button) => button.addEventListener("click", () => setMode(button.dataset.authMode)));
+  document.querySelector("[data-login-form]").addEventListener("submit", async (event) => { event.preventDefault(); const form = event.currentTarget; setBusy(form, true, "로그인 중…"); try { await auth.login(readForm(form)); setFeedback("로그인되었습니다.", "success"); await openApp(); } catch (error) { setBusy(form, false); setFeedback(error.message, "error"); } });
+  document.querySelector("[data-register-form]").addEventListener("submit", async (event) => { event.preventDefault(); const form = event.currentTarget; const values = readForm(form); setBusy(form, true, "계정 만드는 중…"); try { await auth.register(values); await auth.login({ email: values.email, password: values.password }); setFeedback("계정을 만들고 로그인했습니다.", "success"); await openApp(); } catch (error) { setBusy(form, false); setFeedback(error.message, "error"); } });
+  document.querySelector("[data-logout]").addEventListener("click", async () => { let message = "로그아웃되었습니다."; let type = "success"; try { await auth.logout(); } catch { message = "이 탭의 로그인 정보는 삭제했습니다. 서버 로그아웃은 다시 시도하세요."; type = "error"; } scheduleData = []; anonymous.hidden = false; application.hidden = true; setMode("login"); setFeedback(message, type); });
+  window.addEventListener("hashchange", render);
+  getServiceHealth().then((payload) => document.querySelectorAll("[data-status]").forEach((element) => { element.classList.toggle("ready", payload.status === "ready"); element.title = statusText(payload); }));
+  if (auth.hasSession()) openApp(); else setMode("login");
+}
