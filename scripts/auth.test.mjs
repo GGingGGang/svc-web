@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { AuthClient, authUrl, errorMessage, readConfig } from "../public/app.js";
+import { AuthClient, ScheduleClient, authUrl, errorMessage, readConfig } from "../public/app.js";
 
 function storage() {
   const values = new Map();
@@ -65,4 +65,18 @@ test("logout revokes the stored refresh token and clears local session state", a
 test("auth errors stay user-facing without exposing response content", () => {
   assert.equal(errorMessage(401, { error: "invalid_credentials" }), "이메일 또는 비밀번호를 확인하세요.");
   assert.match(errorMessage(503, {}), /HTTP 503/);
+});
+
+test("schedule client follows the core schedule contract with bearer auth", async () => {
+  const session = storage();
+  const auth = new AuthClient({ storage: session, fetchImpl: async () => tokenResponse() });
+  await auth.login({ email: "user@example.com", password: "secret" });
+  const calls = [];
+  const schedules = new ScheduleClient({ authClient: auth, fetchImpl: async (url, options) => {
+    calls.push({ url, options });
+    return new Response(JSON.stringify({ schedules: [] }), { status: 200 });
+  } });
+  assert.deepEqual(await schedules.list({ status: "confirmed" }), []);
+  assert.equal(calls[0].url, "/v1/core/schedules?status=confirmed");
+  assert.equal(calls[0].options.headers.Authorization, "Bearer access-1");
 });

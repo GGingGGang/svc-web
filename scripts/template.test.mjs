@@ -25,6 +25,7 @@ test("nginx exposes its own probes", async () => {
 test("entrypoint renders runtime files under tmp", async () => {
   const entrypoint = await readFile(join(root, "docker-entrypoint.sh"), "utf8");
   assert.match(entrypoint, /\/tmp\/html/);
+  assert.match(entrypoint, /SCHEDULE_BASE_PATH/);
   assert.match(entrypoint, /exec nginx -c \/etc\/nginx\/nginx\.conf/);
 });
 
@@ -41,7 +42,8 @@ test("browser helpers read config and format service status", async () => {
   assert.deepEqual(readConfig({ serviceName: "svc-web", version: "abc123" }), {
     serviceName: "svc-web",
     version: "abc123",
-    authBasePath: "/v1/auth"
+    authBasePath: "/v1/auth",
+    scheduleBasePath: "/v1/core"
   });
   assert.equal(statusText({ status: "ready" }), "ready");
   assert.equal(statusText({}), "unknown");
