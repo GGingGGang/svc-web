@@ -15,7 +15,7 @@ case "$AUTH_BASE_PATH" in
 esac
 
 case "$AUTH_BASE_PATH" in
-  *[!A-Za-z0-9._/-]*) echo "AUTH_BASE_PATH contains unsupported characters" >&2; exit 1 ;;
+  *[!A-Za-z0-9.:/_-]*) echo "AUTH_BASE_PATH contains unsupported characters" >&2; exit 1 ;;
 esac
 
 case "$SCHEDULE_BASE_PATH" in
@@ -24,7 +24,7 @@ case "$SCHEDULE_BASE_PATH" in
 esac
 
 case "$SCHEDULE_BASE_PATH" in
-  *[!A-Za-z0-9._/-]*) echo "SCHEDULE_BASE_PATH contains unsupported characters" >&2; exit 1 ;;
+  *[!A-Za-z0-9.:/_-]*) echo "SCHEDULE_BASE_PATH contains unsupported characters" >&2; exit 1 ;;
 esac
 
 mkdir -p /tmp/html /tmp/nginx/client_temp /tmp/nginx/proxy_temp /tmp/nginx/fastcgi_temp /tmp/nginx/uwsgi_temp /tmp/nginx/scgi_temp

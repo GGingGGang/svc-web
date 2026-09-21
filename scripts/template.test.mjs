@@ -26,6 +26,7 @@ test("entrypoint renders runtime files under tmp", async () => {
   const entrypoint = await readFile(join(root, "docker-entrypoint.sh"), "utf8");
   assert.match(entrypoint, /\/tmp\/html/);
   assert.match(entrypoint, /SCHEDULE_BASE_PATH/);
+  assert.match(entrypoint, /A-Za-z0-9\.:\/_-/);
   assert.match(entrypoint, /exec nginx -c \/etc\/nginx\/nginx\.conf/);
 });
 
