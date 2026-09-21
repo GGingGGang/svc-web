@@ -1,8 +1,8 @@
 const defaultConfig = {
   serviceName: "web",
   version: "dev",
-  authBasePath: "/v1/auth",
-  scheduleBasePath: "/v1/core"
+  authBasePath: "https://api.ggang.cloud/v1/auth",
+  scheduleBasePath: "https://api.ggang.cloud/v1/core"
 };
 
 const accessTokenKey = "svc-web.access-token";

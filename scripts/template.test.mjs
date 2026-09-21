@@ -42,8 +42,8 @@ test("browser helpers read config and format service status", async () => {
   assert.deepEqual(readConfig({ serviceName: "svc-web", version: "abc123" }), {
     serviceName: "svc-web",
     version: "abc123",
-    authBasePath: "/v1/auth",
-    scheduleBasePath: "/v1/core"
+    authBasePath: "https://api.ggang.cloud/v1/auth",
+    scheduleBasePath: "https://api.ggang.cloud/v1/core"
   });
   assert.equal(statusText({ status: "ready" }), "ready");
   assert.equal(statusText({}), "unknown");

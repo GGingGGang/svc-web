@@ -2,16 +2,16 @@
 set -eu
 
 APP_VERSION="${APP_VERSION:-dev}"
-AUTH_BASE_PATH="${AUTH_BASE_PATH:-/v1/auth}"
-SCHEDULE_BASE_PATH="${SCHEDULE_BASE_PATH:-/v1/core}"
+AUTH_BASE_PATH="${AUTH_BASE_PATH:-https://api.ggang.cloud/v1/auth}"
+SCHEDULE_BASE_PATH="${SCHEDULE_BASE_PATH:-https://api.ggang.cloud/v1/core}"
 
 case "$APP_VERSION" in
   *[!A-Za-z0-9._-]*) echo "APP_VERSION may contain only letters, numbers, dot, underscore, and hyphen" >&2; exit 1 ;;
 esac
 
 case "$AUTH_BASE_PATH" in
-  /*) ;;
-  *) echo "AUTH_BASE_PATH must be a same-origin path" >&2; exit 1 ;;
+  https://*|/*) ;;
+  *) echo "AUTH_BASE_PATH must be an HTTPS URL or path" >&2; exit 1 ;;
 esac
 
 case "$AUTH_BASE_PATH" in
@@ -19,8 +19,8 @@ case "$AUTH_BASE_PATH" in
 esac
 
 case "$SCHEDULE_BASE_PATH" in
-  /*) ;;
-  *) echo "SCHEDULE_BASE_PATH must be a same-origin path" >&2; exit 1 ;;
+  https://*|/*) ;;
+  *) echo "SCHEDULE_BASE_PATH must be an HTTPS URL or path" >&2; exit 1 ;;
 esac
 
 case "$SCHEDULE_BASE_PATH" in

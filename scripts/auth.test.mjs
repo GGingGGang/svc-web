@@ -16,9 +16,9 @@ function tokenResponse(access = "access-1", refresh = "refresh-1") {
   return new Response(JSON.stringify({ access_token: access, refresh_token: refresh, token_type: "Bearer", expires_in: 3600 }), { status: 200 });
 }
 
-test("auth client uses the configured same-origin auth path", () => {
-  const config = readConfig({ authBasePath: "/v1/auth/" });
-  assert.equal(authUrl(config, "/login"), "/v1/auth/login");
+test("auth client uses the configured API origin", () => {
+  const config = readConfig({ authBasePath: "https://api.ggang.cloud/v1/auth/" });
+  assert.equal(authUrl(config, "/login"), "https://api.ggang.cloud/v1/auth/login");
 });
 
 test("login saves the access and refresh pair in session storage", async () => {
@@ -30,7 +30,7 @@ test("login saves the access and refresh pair in session storage", async () => {
   });
 
   await client.login({ email: "user@example.com", password: "secret" });
-  assert.equal(calls[0].url, "/v1/auth/login");
+  assert.equal(calls[0].url, "https://api.ggang.cloud/v1/auth/login");
   assert.deepEqual(JSON.parse(calls[0].options.body), { email: "user@example.com", password: "secret" });
   assert.equal(client.getAccessToken(), "access-1");
   assert.equal(client.hasSession(), true);
@@ -57,7 +57,7 @@ test("logout revokes the stored refresh token and clears local session state", a
   });
   client.saveTokenPair({ access_token: "access", refresh_token: "refresh", expires_in: 3600 });
   await client.logout();
-  assert.equal(calls[0].url, "/v1/auth/logout");
+  assert.equal(calls[0].url, "https://api.ggang.cloud/v1/auth/logout");
   assert.deepEqual(JSON.parse(calls[0].options.body), { refresh_token: "refresh" });
   assert.equal(client.hasSession(), false);
 });
@@ -77,6 +77,6 @@ test("schedule client follows the core schedule contract with bearer auth", asyn
     return new Response(JSON.stringify({ schedules: [] }), { status: 200 });
   } });
   assert.deepEqual(await schedules.list({ status: "confirmed" }), []);
-  assert.equal(calls[0].url, "/v1/core/schedules?status=confirmed");
+  assert.equal(calls[0].url, "https://api.ggang.cloud/v1/core/schedules?status=confirmed");
   assert.equal(calls[0].options.headers.Authorization, "Bearer access-1");
 });
