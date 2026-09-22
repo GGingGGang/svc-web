@@ -21,6 +21,19 @@ test("auth client uses the configured API origin", () => {
   assert.equal(authUrl(config, "/login"), "https://api.ggang.cloud/v1/auth/login");
 });
 
+test("both clients preserve the browser fetch receiver", async (t) => {
+  t.mock.method(globalThis, "fetch", async function (url) {
+    assert.equal(this, globalThis);
+    return url.endsWith("/login")
+      ? tokenResponse()
+      : new Response(JSON.stringify({ schedules: [] }), { status: 200 });
+  });
+  const auth = new AuthClient({ storage: storage() });
+  await auth.login({ email: "user@example.com", password: "secret" });
+  const schedules = new ScheduleClient({ authClient: auth });
+  assert.deepEqual(await schedules.list(), []);
+});
+
 test("login saves the access and refresh pair in session storage", async () => {
   const calls = [];
   const client = new AuthClient({

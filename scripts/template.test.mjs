@@ -10,7 +10,7 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 test("static shell keeps runtime configuration external", async () => {
   const html = await readFile(join(root, "public", "index.html"), "utf8");
   assert.match(html, /runtime-config\.js/);
-  assert.match(html, /type="module" src="\/app\.js"/);
+  assert.match(html, /type="module" src="\/ui\.js"/);
   assert.match(html, /data-auth-message/);
   assert.match(html, /data-view/);
   assert.doesNotMatch(html, /mini-calendar/);
@@ -38,6 +38,9 @@ test("build script emits browser assets", async () => {
   await import("./build.mjs");
   await stat(join(dist, "index.html"));
   await stat(join(dist, "app.js"));
+  await stat(join(dist, "ui.js"));
+  await stat(join(dist, "adminator.css"));
+  await stat(join(dist, "vendors", "adminator", "LICENSE.txt"));
   await stat(join(dist, "runtime-config.js"));
 });
 

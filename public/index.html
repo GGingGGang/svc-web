@@ -1,33 +1,199 @@
 <!doctype html>
-<html lang="ko">
+<html lang="ko" data-theme="light">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Planned · 일정 관리</title>
     <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/adminator.css" />
     <script src="/runtime-config.js"></script>
-    <script type="module" src="/app.js"></script>
+    <script type="module" src="/ui.js"></script>
   </head>
   <body>
-    <main class="auth-page" data-auth-anonymous>
-      <section class="auth-hero">
-        <a class="brand brand-light" href="#">planned<span>.</span></a>
-        <div class="hero-copy"><p class="eyebrow">YOUR TIME, IN FOCUS</p><h1>일정을<br />명확하게.</h1><p>해야 할 일을 한곳에 모으고, 다음 일정에 집중하세요.</p></div>
-        <p class="hero-foot">Plan lightly. Remember what matters.</p>
-      </section>
-      <section class="auth-panel" aria-labelledby="auth-title">
+    <main class="auth-shell" data-auth-anonymous>
+      <aside class="auth-aside" aria-hidden="true">
+        <a class="auth-brand" href="#"
+          ><span class="brand-mark">P</span><span>Planned</span></a
+        >
+        <div class="auth-aside-body">
+          <span class="auth-aside-eyebrow">SCHEDULE WORKSPACE</span>
+          <h1>오늘의 시간을<br />선명하게.</h1>
+          <p>일정을 한곳에서 확인하고, 다음 할 일에 집중하세요.</p>
+          <div class="auth-quote">
+            계획은 많을수록 좋은 것이 아니라, 다음 행동이 보일 때 충분합니다.
+          </div>
+        </div>
+        <p class="auth-aside-footer">PLANNED · PERSONAL SCHEDULE</p>
+      </aside>
+      <section class="auth-main" aria-labelledby="auth-title">
+        <div class="auth-main-top">
+          <span class="muted">내 일정 관리</span
+          ><span class="connection-label"
+            ><i data-status></i> 웹 서버 상태</span
+          >
+        </div>
         <div class="auth-card">
-          <p class="eyebrow">SCHEDULE WORKSPACE</p><h2 id="auth-title" data-auth-title>다시 만나서 반가워요</h2><p class="auth-subtitle" data-auth-subtitle>계속하려면 로그인하세요.</p>
-          <div class="auth-tabs" role="tablist" aria-label="계정 작업"><button type="button" class="tab active" data-auth-mode="login" role="tab" aria-selected="true">로그인</button><button type="button" class="tab" data-auth-mode="register" role="tab" aria-selected="false">회원가입</button></div>
-          <p class="feedback" data-auth-message aria-live="polite">API Gateway로 안전하게 연결합니다.</p>
-          <form class="auth-form" data-login-form><label>이메일<input type="email" name="email" autocomplete="email" required /></label><label>비밀번호<input type="password" name="password" autocomplete="current-password" required /></label><button type="submit" class="button button-primary">로그인</button></form>
-          <form class="auth-form" data-register-form hidden><label>이름<input type="text" name="display_name" autocomplete="name" maxlength="100" required /></label><label>이메일<input type="email" name="email" autocomplete="email" required /></label><label>비밀번호<input type="password" name="password" autocomplete="new-password" minlength="1" required /></label><label>시간대<input type="text" name="timezone" data-timezone maxlength="64" required /></label><button type="submit" class="button button-primary">계정 만들기</button></form>
+          <p class="eyebrow">WELCOME</p>
+          <h2 id="auth-title" data-auth-title>다시 만나서 반가워요</h2>
+          <p class="auth-subtitle" data-auth-subtitle>
+            계속하려면 로그인하세요.
+          </p>
+          <div class="tabs" role="tablist" aria-label="계정 작업">
+            <button
+              type="button"
+              class="tab is-active"
+              data-auth-mode="login"
+              role="tab"
+              aria-selected="true"
+            >
+              로그인</button
+            ><button
+              type="button"
+              class="tab"
+              data-auth-mode="register"
+              role="tab"
+              aria-selected="false"
+            >
+              회원가입
+            </button>
+          </div>
+          <div class="alert info" data-auth-message aria-live="polite">
+            API Gateway에 연결합니다.
+          </div>
+          <form class="auth-form" data-login-form>
+            <label class="field"
+              ><span>이메일</span
+              ><input
+                class="input"
+                type="email"
+                name="email"
+                autocomplete="email"
+                required /></label
+            ><label class="field"
+              ><span>비밀번호</span
+              ><input
+                class="input"
+                type="password"
+                name="password"
+                autocomplete="current-password"
+                required /></label
+            ><button type="submit" class="btn btn-primary">로그인</button>
+          </form>
+          <form class="auth-form" data-register-form hidden>
+            <label class="field"
+              ><span>이름</span
+              ><input
+                class="input"
+                type="text"
+                name="display_name"
+                autocomplete="name"
+                maxlength="100"
+                required /></label
+            ><label class="field"
+              ><span>이메일</span
+              ><input
+                class="input"
+                type="email"
+                name="email"
+                autocomplete="email"
+                required /></label
+            ><label class="field"
+              ><span>비밀번호</span
+              ><input
+                class="input"
+                type="password"
+                name="password"
+                autocomplete="new-password"
+                minlength="1"
+                required /></label
+            ><label class="field"
+              ><span>시간대</span
+              ><input
+                class="input"
+                type="text"
+                name="timezone"
+                data-timezone
+                maxlength="64"
+                required /></label
+            ><button type="submit" class="btn btn-primary">계정 만들기</button>
+          </form>
         </div>
       </section>
     </main>
-    <div class="app-shell" data-authenticated hidden>
-      <aside class="sidebar" aria-label="주 메뉴"><a class="brand" href="#dashboard">planned<span>.</span></a><nav><a class="nav-link" href="#dashboard" data-route="dashboard"><span>⌂</span> 개요</a><a class="nav-link" href="#schedules" data-route="schedules"><span>□</span> 모든 일정</a><a class="nav-link" href="#create" data-route="create"><span>＋</span> 일정 만들기</a></nav><div class="sidebar-footer">v<span data-version>dev</span></div></aside>
-      <section class="workspace"><header class="topbar"><button class="menu-button" type="button" data-menu-toggle aria-label="메뉴 열기">☰</button><div class="crumb"><span data-page-kicker>개요</span><strong data-page-title>내 일정</strong></div><div class="top-actions"><span class="connection" data-status title="웹 서비스 상태"></span><button class="icon-button" type="button" data-theme-toggle aria-label="테마 전환">◐</button><button class="profile-button" type="button" data-logout aria-label="로그아웃">로그아웃</button></div></header><main class="content" data-view></main><footer>Planned · <span data-version>dev</span></footer></section>
+    <div class="shell" data-authenticated hidden>
+      <aside class="d-sidebar" aria-label="주 메뉴">
+        <a class="brand" href="#dashboard"
+          ><span class="brand-mark">P</span
+          ><span class="brand-text">Planned<small>MY SCHEDULE</small></span></a
+        >
+        <nav class="nav-section" aria-label="일정 메뉴">
+          <p class="nav-label">WORKSPACE</p>
+          <a class="nav-link" href="#dashboard" data-route="dashboard"
+            ><svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="m3 12 9-9 9 9v9H3zM9 21v-6h6v6" /></svg
+            ><span>개요</span></a
+          ><a class="nav-link" href="#schedules" data-route="schedules"
+            ><svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M8 2v4m8-4v4M3 10h18M5 4h14a2 2 0 0 1 2 2v15H3V6a2 2 0 0 1 2-2z"
+              /></svg
+            ><span>모든 일정</span></a
+          ><a class="nav-link" href="#create" data-route="create"
+            ><svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 5v14M5 12h14" /></svg
+            ><span>일정 만들기</span></a
+          >
+        </nav>
+        <div class="sidebar-footer">
+          <span class="avatar">P</span
+          ><span
+            >내 계정<small>v<span data-version>dev</span></small></span
+          ><button type="button" data-logout aria-label="로그아웃">
+            <svg viewBox="0 0 24 24">
+              <path
+                d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"
+              />
+            </svg>
+          </button>
+        </div>
+      </aside>
+      <div class="drawer-backdrop" data-menu-toggle></div>
+      <section class="main-area">
+        <header class="d-topbar">
+          <div class="crumbs">
+            <button
+              type="button"
+              class="hamburger"
+              data-menu-toggle
+              aria-label="메뉴 열기"
+              aria-expanded="false"
+            >
+              <svg viewBox="0 0 24 24">
+                <path d="M3 6h18M3 12h18M3 18h18" />
+              </svg></button
+            ><span data-page-kicker>WORKSPACE</span><b data-page-title>개요</b>
+          </div>
+          <div class="topbar-actions">
+            <span class="connection-label"
+              ><i data-status></i><span>웹 서버</span></span
+            ><button
+              type="button"
+              class="icon-btn"
+              data-theme-toggle
+              aria-label="테마 전환"
+            >
+              <svg viewBox="0 0 24 24">
+                <path d="M12 3a7 7 0 1 0 9 9A9 9 0 0 1 12 3z" />
+              </svg>
+            </button>
+          </div>
+        </header>
+        <main class="content" data-view aria-live="polite"></main>
+        <footer class="d-footer">
+          Planned <span>·</span> v<span data-version>dev</span>
+        </footer>
+      </section>
     </div>
+    <div class="toast" data-toast role="status" aria-live="polite" hidden></div>
   </body>
 </html>
