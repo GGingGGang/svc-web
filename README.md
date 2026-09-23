@@ -43,7 +43,7 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-Playwright가 `127.0.0.1:5179`에 테스트 서버를 띄워 데스크톱·모바일 Chromium을 검사합니다. API는 테스트 내부에서 가짜 응답으로 대체하고 외부 요청은 차단하므로 실제 계정·일정을 만들지 않습니다. 로그인 실패·재로그인, 가입·세션 복원·만료, 목록 재시도, 저장 실패 시 입력 보존, HTML 이스케이프, 테마와 모바일 메뉴를 확인합니다. 캡처는 `test-results/`에 저장됩니다.
+Playwright가 `127.0.0.1:5179`에 테스트 서버를 띄워 데스크톱·모바일 Chromium을 검사합니다. API는 테스트 내부에서 가짜 응답으로 대체하고 외부 요청은 차단하므로 실제 계정·일정을 만들지 않습니다. 로그인 실패·재로그인, 가입·세션 복원·만료, 목록 재시도, 저장 실패 시 입력 보존, AI 후보의 명시 저장·부분 실패 재시도, HTML 이스케이프, 테마와 모바일 메뉴를 확인합니다. 캡처는 `test-results/`에 저장됩니다.
 
 이 검사는 운영 환경 E2E가 아닙니다. 실제 Gateway 라우팅, CORS, auth/core 연결은 배포 후 별도로 확인해야 합니다. Playwright는 개발 의존성이며 최종 nginx 이미지에는 브라우저나 Node 패키지가 포함되지 않습니다.
 
@@ -63,7 +63,8 @@ Playwright가 `127.0.0.1:5179`에 테스트 서버를 띄워 데스크톱·모�
 - 토큰: access/refresh 쌍을 탭 범위 `sessionStorage`에 보관; 테마만 `localStorage` 사용
 - 복원: 기존 탭을 새로고침하면 `/refresh` 호출; 복원 실패 시 로그인 화면에 오류 표시
 - 로그아웃: `/logout`에 refresh 토큰 전송; 실패해도 이 탭의 토큰 제거
-- 일정: `/schedules`에 Bearer access 토큰으로 GET·POST, `/schedules/{id}`에 DELETE
+- 일정: `/schedules`에 Bearer access 토큰으로 GET·POST, `/schedules/{id}`에 PATCH·DELETE
+- AI 추출: `#extract`에서 원문·기준 시각·시간대와 선택적 Gemini 키를 `/schedules/extract`로 보내 후보만 받습니다. 사용자가 후보를 확인·선택한 뒤 `/schedules`에 `source=ai`와 후보별 멱등 키로 저장합니다. 개인 키는 현재 화면 메모리에만 두고 이동·로그아웃·새로고침 시 지웁니다.
 
 `/healthz`와 `/readyz`는 nginx 자체 상태입니다. 화면의 '웹 서버' 표시도 이 상태만 나타내며 auth/core의 정상 작동을 보장하지 않습니다.
 

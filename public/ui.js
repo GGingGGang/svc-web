@@ -85,6 +85,42 @@ function createView(draft = {}, editing = false) {
   return `<div class="page-heading"><div><h1>${editing ? "일정 수정" : "일정 만들기"}</h1><p>저장하면 Core API에 바로 반영됩니다.</p></div></div><form class="card form-card" data-schedule-form><div class="form-grid"><label class="field"><span>제목</span><input class="input" name="title" maxlength="255" required placeholder="팀 회의" value="${escapeHtml(draft.title || "")}"></label><label class="field"><span>시작 시간</span><input class="input" name="start_at" type="datetime-local" required value="${escapeHtml(now)}"></label><label class="field"><span>장소</span><input class="input" name="location" maxlength="255" placeholder="온라인 또는 장소" value="${escapeHtml(draft.location || "")}"></label><label class="field"><span>상태</span><select class="select" name="status"><option value="confirmed" ${draft.status === "tentative" || draft.status === "cancelled" ? "" : "selected"}>확정</option><option value="tentative" ${draft.status === "tentative" ? "selected" : ""}>미정</option><option value="cancelled" ${draft.status === "cancelled" ? "selected" : ""}>취소</option></select></label><label class="field span-2"><span>설명</span><textarea class="textarea" name="description" placeholder="선택 사항">${escapeHtml(draft.description || "")}</textarea></label></div><div class="form-actions"><a class="btn btn-secondary" href="#schedules">취소</a><span class="spacer"></span><button type="submit" class="btn btn-primary">일정 저장</button></div></form>`;
 }
 
+function candidateView(candidate, index) {
+  const item = candidate.data;
+  const start = item.start_at && !Number.isNaN(Date.parse(item.start_at)) ? localDateTime(item.start_at) : "";
+  const end = item.end_at && !Number.isNaN(Date.parse(item.end_at)) ? localDateTime(item.end_at) : "";
+  return `<fieldset class="card form-card" data-candidate="${index}" ${candidate.saved ? "disabled" : ""}>
+    <legend>후보 ${index + 1}${candidate.saved ? " · 저장됨" : candidate.data.needs_confirmation ? " · 확인 필요" : ""}</legend>
+    <label class="field"><input type="checkbox" name="selected" ${candidate.selected ? "checked" : ""}> 이 후보 저장</label>
+    ${candidate.data.issues?.length ? `<p>확인 항목: ${escapeHtml(candidate.data.issues.join(", "))}</p>` : ""}
+    ${candidate.data.needs_confirmation ? `<label class="field"><input type="checkbox" name="confirmed" ${candidate.confirmed ? "checked" : ""}> 불명확한 내용을 확인하고 직접 확정했습니다</label>` : ""}
+    ${candidate.error ? `<p class="alert error" role="alert">${escapeHtml(candidate.error)}</p>` : ""}
+    <div class="form-grid">
+      <label class="field"><span>제목</span><input class="input" name="title" maxlength="255" required value="${escapeHtml(item.title || "")}"></label>
+      <label class="field"><span>시작 (브라우저 시간대)</span><input class="input" type="datetime-local" name="start_at" required value="${escapeHtml(start)}"></label>
+      <label class="field"><span>종료 (선택)</span><input class="input" type="datetime-local" name="end_at" value="${escapeHtml(end)}"></label>
+      <label class="field"><span>장소</span><input class="input" name="location" maxlength="255" value="${escapeHtml(item.location || "")}"></label>
+      <label class="field span-2"><span>설명</span><textarea class="textarea" name="description" maxlength="10000">${escapeHtml(item.description || "")}</textarea></label>
+      <label class="field"><input type="checkbox" name="all_day" ${item.all_day ? "checked" : ""}> 종일</label>
+    </div>
+  </fieldset>`;
+}
+
+function extractView(state) {
+  const draft = state.extract;
+  return `<div class="page-heading"><div><h1>AI 일정 추출</h1><p>원문은 외부 AI로 전달됩니다. 개인정보와 비밀은 입력하지 마세요.</p></div><a class="btn btn-secondary" href="#create">직접 일정 만들기</a></div>
+    <form class="card form-card" data-extract-form>
+      ${draft.error ? `<div class="alert error" role="alert">${escapeHtml(draft.error)}</div>` : ""}
+      <div class="form-grid">
+        <label class="field span-2"><span>일정 원문</span><textarea class="textarea" name="text" required>${escapeHtml(draft.text)}</textarea></label>
+        <label class="field"><span>기준 일시</span><input class="input" name="now" type="datetime-local" required value="${escapeHtml(draft.now)}"></label>
+        <label class="field"><span>해석 시간대 (IANA)</span><input class="input" name="timezone" required value="${escapeHtml(draft.timezone)}"></label>
+        <label class="field span-2"><span>개인 Gemini 키 (선택, 이 화면의 메모리에만 유지)</span><input class="input" name="api_key" type="password" autocomplete="off"></label>
+      </div><div class="form-actions"><button type="submit" class="btn btn-primary" ${draft.busy || (draft.keyUnavailable && !draft.key) ? "disabled" : ""}>${draft.busy ? "추출 중…" : "후보 추출"}</button></div>
+    </form>
+    ${draft.candidates.length ? `<form data-candidates-form novalidate><p>후보를 확인·수정하고 저장할 것만 선택하세요. 추출만으로는 저장되지 않습니다.${draft.truncated ? " 일부만 추출됐습니다. 원문을 나눠 다시 추출하세요." : ""}</p>${draft.candidates.map(candidateView).join("")}<div class="form-actions"><button type="submit" class="btn btn-primary" ${draft.saving || draft.candidates.every((item) => item.saved) ? "disabled" : ""}>${draft.saving ? "저장 중…" : "선택한 후보 저장"}</button></div></form>` : draft.extracted ? "<p>추출된 일정 후보가 없습니다. 원문을 바꿔 다시 시도하거나 직접 일정을 만드세요.</p>" : ""}`;
+}
+
 function init() {
   const config = readConfig();
   const auth = new AuthClient({ config });
@@ -93,8 +129,10 @@ function init() {
   const application = document.querySelector("[data-authenticated]");
   const view = document.querySelector("[data-view]");
   const toast = document.querySelector("[data-toast]");
-  const state = { items: [], loading: false, error: "", draft: {}, editDraft: {}, editingId: null, createKey: null, createFingerprint: null };
+  const state = { items: [], loading: false, error: "", draft: {}, editDraft: {}, editingId: null, createKey: null, createFingerprint: null,
+    extract: { text: "", now: localDateTime(new Date()), timezone: getBrowserTimezone(), key: "", keyUnavailable: false, candidates: [], error: "", busy: false, saving: false, extracted: false, truncated: false, generation: 0 } };
   const titles = {
+    extract: ["AI", "일정 추출"],
     dashboard: ["WORKSPACE", "개요"],
     schedules: ["SCHEDULES", "모든 일정"],
     create: ["SCHEDULES", "일정 만들기"],
@@ -172,7 +210,9 @@ function init() {
     document.querySelector("[data-page-kicker]").textContent = titles[route][0];
     document.querySelector("[data-page-title]").textContent = titles[route][1];
     view.innerHTML =
-      route === "schedules"
+      route === "extract"
+        ? extractView(state)
+        : route === "schedules"
         ? schedulesView(state)
         : route === "create" || route === "edit"
           ? createView(route === "edit" ? state.editDraft : state.draft, route === "edit")
@@ -183,12 +223,132 @@ function init() {
     view
       .querySelector("[data-schedule-form]")
       ?.addEventListener("submit", saveSchedule);
+    view.querySelector("[data-extract-form]")?.addEventListener("submit", extractSchedules);
+    view.querySelector("[data-extract-form] [name=api_key]")?.addEventListener("input", (event) => {
+      state.extract.key = event.target.value;
+      view.querySelector("[data-extract-form] button[type=submit]").disabled = state.extract.busy || (state.extract.keyUnavailable && !state.extract.key);
+    });
+    if (route === "extract") view.querySelector("[name=api_key]").value = state.extract.key;
+    view.querySelector("[data-candidates-form]")?.addEventListener("submit", saveCandidates);
     view.querySelectorAll("[data-delete-id]").forEach((button) =>
       button.addEventListener("click", deleteSchedule),
     );
     view.querySelectorAll("[data-edit-id]").forEach((button) =>
       button.addEventListener("click", editSchedule),
     );
+  };
+  let extractController;
+  const extractSchedules = async (event) => {
+    event.preventDefault();
+    const draft = state.extract;
+    const values = Object.fromEntries(new FormData(event.currentTarget));
+    draft.text = values.text;
+    draft.now = values.now;
+    draft.timezone = values.timezone.trim();
+    draft.error = "";
+    if (!draft.text.trim() || [...draft.text].length > 10000 || new TextEncoder().encode(draft.text).length > 65536) {
+      draft.error = "원문은 공백만 입력할 수 없고 10,000자·64KiB 이하여야 합니다.";
+      render();
+      return;
+    }
+    extractController?.abort();
+    extractController = new AbortController();
+    const controller = extractController;
+    const generation = ++draft.generation;
+    const timeout = setTimeout(() => controller.abort(), 20000);
+    draft.busy = true;
+    draft.candidates = [];
+    draft.extracted = false;
+    draft.truncated = false;
+    render();
+    try {
+      const payload = await schedules.extract({ text: draft.text, now: new Date(draft.now).toISOString(), timezone: draft.timezone, apiKey: draft.key, signal: controller.signal });
+      if (!Array.isArray(payload?.candidates) || payload.candidates.length > 20) throw new Error("AI 응답의 후보 형식이 올바르지 않습니다.");
+      if (generation !== draft.generation || currentRoute() !== "extract") return;
+      draft.candidates = payload.candidates.map((data) => ({ data: data && typeof data === "object" ? data : {}, selected: true, saved: false, error: "", key: null, fingerprint: null }));
+      draft.extracted = true;
+      draft.truncated = payload.truncated === true;
+      draft.keyUnavailable = false;
+    } catch (error) {
+      if (generation !== draft.generation || currentRoute() !== "extract") return;
+      draft.error = controller.signal.aborted
+        ? "AI 추출 시간이 초과되거나 요청이 취소되었습니다. 원문을 확인하고 다시 시도하세요."
+        : error.status === 429
+          ? "AI 사용량 제한에 도달했습니다. 잠시 후 다시 시도하세요."
+          : error.code === "ai_key_unavailable"
+            ? "AI 공용 키가 설정되지 않았습니다. 개인 키를 입력하거나 직접 일정을 만드세요."
+          : error.status === 502
+            ? "AI 서비스 또는 키를 사용할 수 없습니다. 키를 확인하거나 직접 일정을 만드세요."
+            : `AI 후보를 추출하지 못했습니다. ${error.message}`;
+      draft.keyUnavailable = error.code === "ai_key_unavailable";
+    } finally {
+      clearTimeout(timeout);
+      if (generation === draft.generation) {
+        draft.busy = false;
+        render();
+      }
+    }
+  };
+  const saveCandidates = async (event) => {
+    event.preventDefault();
+    const draft = state.extract;
+    const selected = [];
+    for (const fieldset of event.currentTarget.querySelectorAll("[data-candidate]")) {
+      const candidate = draft.candidates[Number(fieldset.dataset.candidate)];
+      if (candidate.saved) continue;
+      candidate.selected = fieldset.querySelector("[name=selected]").checked;
+      if (!candidate.selected) continue;
+      candidate.confirmed = fieldset.querySelector("[name=confirmed]")?.checked ?? false;
+      if (candidate.data.needs_confirmation && !candidate.confirmed) {
+        fieldset.querySelector("[name=confirmed]").focus();
+        notify("확인 필요 항목을 검토하고 직접 확정하세요.", true);
+        return;
+      }
+      for (const name of ["title", "start_at"]) {
+        if (!fieldset.querySelector(`[name=${name}]`).reportValidity()) return;
+      }
+      const value = (name) => fieldset.querySelector(`[name=${name}]`).value;
+      const schedule = {
+        title: value("title").trim(),
+        start_at: new Date(value("start_at")).toISOString(),
+        end_at: value("end_at") ? new Date(value("end_at")).toISOString() : null,
+        location: value("location") || null,
+        description: value("description") || null,
+        all_day: fieldset.querySelector("[name=all_day]").checked,
+        status: "confirmed",
+        source: "ai",
+      };
+      candidate.data = { ...candidate.data, ...schedule };
+      candidate.error = "";
+      if (!schedule.title || (schedule.end_at && schedule.end_at <= schedule.start_at)) {
+        candidate.error = !schedule.title ? "제목을 입력하세요." : "종료는 시작보다 늦어야 합니다.";
+        continue;
+      }
+      const fingerprint = JSON.stringify(schedule);
+      if (candidate.fingerprint !== fingerprint) {
+        candidate.fingerprint = fingerprint;
+        candidate.key = crypto.randomUUID();
+      }
+      selected.push({ candidate, schedule });
+    }
+    if (!selected.length) {
+      render();
+      return;
+    }
+    draft.saving = true;
+    render();
+    for (const { candidate, schedule } of selected) {
+      try {
+        await schedules.create(schedule, candidate.key);
+        candidate.saved = true;
+        candidate.selected = false;
+      } catch (error) {
+        candidate.error = `저장 실패 (HTTP ${error.status ?? "연결 오류"}). 수정하거나 다시 시도하세요.`;
+      }
+    }
+    draft.saving = false;
+    render();
+    if (selected.some(({ candidate }) => candidate.saved)) await loadSchedules();
   };
   const loadSchedules = async () => {
     state.loading = true;
@@ -371,6 +531,10 @@ function init() {
       state.createFingerprint = null;
       state.editDraft = {};
       state.editingId = null;
+      extractController?.abort();
+      state.extract.generation++;
+      state.extract.key = "";
+      state.extract.candidates = [];
       state.error = "";
       view.replaceChildren();
       closeMenu();
@@ -383,7 +547,15 @@ function init() {
       document.querySelector("[data-timezone]").value = getBrowserTimezone();
       setMode("login");
     });
-  window.addEventListener("hashchange", render);
+  window.addEventListener("hashchange", () => {
+    if (currentRoute() !== "extract") {
+      extractController?.abort();
+      state.extract.generation++;
+      state.extract.busy = false;
+      state.extract.key = "";
+    }
+    render();
+  });
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape") closeMenu();
   });

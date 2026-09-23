@@ -186,6 +186,7 @@ export class ScheduleClient {
         `Schedule request failed (HTTP ${response.status})`,
       );
       error.status = response.status;
+      error.code = (await safeJson(response)).error;
       throw error;
     }
     return response.status === 204 ? null : response.json();
@@ -206,6 +207,15 @@ export class ScheduleClient {
       method: "POST",
       body: JSON.stringify(schedule),
       ...(idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : {}),
+    });
+  }
+
+  extract({ text, now, timezone, apiKey, signal }) {
+    return this.request("/extract", {
+      method: "POST",
+      body: JSON.stringify({ text, now, timezone }),
+      signal,
+      ...(apiKey ? { headers: { "X-Gemini-Key": apiKey } } : {}),
     });
   }
 

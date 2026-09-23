@@ -5,7 +5,7 @@ const tokens = { access_token: "test-access", refresh_token: "test-refresh", exp
 
 // No account or schedule is written to a real service by these browser checks.
 async function mockApi(page) {
-  const state = { loginStatus: 200, refreshStatus: 200, listStatus: 200, saveStatus: 201, updateStatus: 200, deleteStatus: 204, deleteGate: null, schedules: [], calls: [] };
+  const state = { loginStatus: 200, refreshStatus: 200, listStatus: 200, saveStatus: 201, failTitle: null, extractStatus: 200, extractErrorCode: "extraction_failed", extractCandidates: [], extractTruncated: false, updateStatus: 200, deleteStatus: 204, deleteGate: null, schedules: [], calls: [] };
   await page.route("**/*", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -25,10 +25,11 @@ async function mockApi(page) {
     if (url.pathname.endsWith("/refresh")) return route.fulfill({ status: state.refreshStatus, json: state.refreshStatus === 200 ? tokens : { error: "invalid_refresh_token" } });
     if (url.pathname.endsWith("/register")) return route.fulfill({ status: 201, json: { id: "test-user" } });
     if (url.pathname.endsWith("/logout")) return route.fulfill({ status: 204 });
+    if (url.pathname === "/v1/core/schedules/extract") return route.fulfill({ status: state.extractStatus, json: state.extractStatus === 200 ? { candidates: state.extractCandidates, truncated: state.extractTruncated } : { error: state.extractErrorCode } });
     if (url.pathname === "/v1/core/schedules") {
       if (method === "GET") return route.fulfill({ status: state.listStatus, json: { schedules: state.schedules } });
       if (method === "POST") {
-        if (state.saveStatus !== 201) return route.fulfill({ status: state.saveStatus, json: { error: "unavailable" } });
+        if (state.saveStatus !== 201 || body.title === state.failTitle) return route.fulfill({ status: state.saveStatus !== 201 ? state.saveStatus : 503, json: { error: "unavailable" } });
         const schedule = { id: "test-schedule", ...body };
         state.schedules.push(schedule);
         return route.fulfill({ status: 201, json: schedule });
@@ -253,4 +254,88 @@ test("theme persists and mobile navigation closes on Escape and selection", asyn
   }
   await noPageOverflow(page);
   await page.screenshot({ path: testInfo.outputPath("dashboard-dark.png"), fullPage: true, animations: "disabled" });
+});
+
+test("AI candidates require confirmation and only failed saves retry with the same key", async ({ page }) => {
+  const state = await mockApi(page);
+  state.extractTruncated = true;
+  state.extractCandidates = [
+    { title: "First", start_at: "2030-06-15T05:30:00Z", end_at: null, all_day: false, location: null, description: "", confidence: 0.9 },
+    { title: "Second", start_at: null, end_at: null, all_day: false, location: null, description: "", confidence: 0.4, needs_confirmation: true, issues: ["missing_start_at"] },
+  ];
+  await page.goto("/");
+  await login(page);
+  await navigate(page, "extract");
+  const form = page.locator("[data-extract-form]");
+  await form.locator("[name=text]").fill("First tomorrow; Second next week");
+  await form.locator("[name=api_key]").fill("private-test-key");
+  await form.locator("button[type=submit]").click();
+  await expect(page.locator("[data-candidate]")).toHaveCount(2);
+  await expect(page.locator("[data-candidates-form]")).toContainText("일부만 추출됐습니다");
+  await noPageOverflow(page);
+  expect(state.schedules).toHaveLength(0);
+  const extract = state.calls.find((call) => call.path.endsWith("/extract"));
+  expect(extract.body).toMatchObject({ text: "First tomorrow; Second next week", timezone: expect.any(String), now: expect.any(String) });
+  expect(extract.headers["x-gemini-key"]).toBe("private-test-key");
+  const second = page.locator('[data-candidate="1"]');
+  await expect(second).toContainText("확인 필요");
+  state.failTitle = "Second";
+  await page.locator("[data-candidates-form] button[type=submit]").click();
+  expect(state.schedules).toHaveLength(0); // unresolved candidate blocks the batch
+  await second.locator("[name=selected]").uncheck();
+  await page.locator("[data-candidates-form] button[type=submit]").click();
+  await expect(page.locator('[data-candidate="0"]')).toContainText("저장됨");
+  expect(state.schedules).toHaveLength(1); // excluded incomplete candidate does not block
+  await second.locator("[name=selected]").check();
+  await second.locator("[name=start_at]").fill("2030-06-16T14:30");
+  await second.locator("[name=confirmed]").check();
+  await page.locator("[data-candidates-form] button[type=submit]").click();
+  await expect(page.locator('[data-candidate="1"]')).toContainText("저장 실패");
+  expect(state.schedules).toHaveLength(1);
+  const firstSave = state.calls.filter((call) => call.method === "POST" && call.path === "/v1/core/schedules");
+  expect(firstSave.map((call) => call.body.source)).toEqual(["ai", "ai"]);
+  expect(firstSave[0].headers["idempotency-key"]).not.toBe(firstSave[1].headers["idempotency-key"]);
+  state.failTitle = null;
+  await page.locator("[data-candidates-form] button[type=submit]").click();
+  await expect(page.locator('[data-candidate="1"]')).toContainText("저장됨");
+  expect(state.schedules).toHaveLength(2);
+  const saves = state.calls.filter((call) => call.method === "POST" && call.path === "/v1/core/schedules");
+  expect(saves.map((call) => call.body.title)).toEqual(["First", "Second", "Second"]);
+  expect(saves[1].headers["idempotency-key"]).toBe(saves[2].headers["idempotency-key"]);
+  expect(await page.evaluate(() => Object.keys(sessionStorage).some((key) => key.includes("gemini")))).toBe(false);
+  await navigate(page, "schedules");
+  await navigate(page, "extract");
+  await expect(page.locator("[data-extract-form] [name=api_key]")).toHaveValue("");
+});
+
+test("AI rate limiting keeps the text and manual creation available", async ({ page }) => {
+  const state = await mockApi(page);
+  state.extractStatus = 429;
+  await page.goto("/");
+  await login(page);
+  await navigate(page, "extract");
+  const form = page.locator("[data-extract-form]");
+  await form.locator("[name=text]").fill("Tomorrow at 3 PM");
+  await form.locator("button[type=submit]").click();
+  await expect(form.locator("[name=text]")).toHaveValue("Tomorrow at 3 PM");
+  await expect(form.locator("[role=alert]")).toContainText("사용량 제한");
+  await expect(page.locator('[data-view] a[href="#create"]')).toBeVisible();
+  expect(state.schedules).toHaveLength(0);
+});
+
+test("AI with no configured key is disabled until a private key is entered", async ({ page }) => {
+  const state = await mockApi(page);
+  state.extractStatus = 502;
+  state.extractErrorCode = "ai_key_unavailable";
+  await page.goto("/");
+  await login(page);
+  await navigate(page, "extract");
+  const form = page.locator("[data-extract-form]");
+  await form.locator("[name=text]").fill("Tomorrow at 3 PM");
+  await form.locator("button[type=submit]").click();
+  await expect(form.locator("[role=alert]")).toContainText("공용 키가 설정되지 않았습니다");
+  await expect(form.locator("button[type=submit]")).toBeDisabled();
+  await expect(page.locator('[data-view] a[href="#create"]')).toBeVisible();
+  await form.locator("[name=api_key]").fill("private-test-key");
+  await expect(form.locator("button[type=submit]")).toBeEnabled();
 });
