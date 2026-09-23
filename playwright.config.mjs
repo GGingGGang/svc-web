@@ -6,6 +6,7 @@ export default defineConfig({
   workers: 2,
   use: {
     baseURL: "http://127.0.0.1:5179",
+    channel: process.env.PLAYWRIGHT_CHANNEL || undefined,
     colorScheme: "light",
     screenshot: "only-on-failure",
     trace: "retain-on-failure"

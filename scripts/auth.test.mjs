@@ -109,3 +109,125 @@ test("schedule delete waits for a 204 response and reports failure", async () =>
   assert.equal(calls[0].options.method, "DELETE");
   assert.equal(calls[0].options.headers.Authorization, "Bearer access-1");
 });
+
+test("schedule update sends only editable fields to the owned resource", async () => {
+  const calls = [];
+  const schedules = new ScheduleClient({
+    authClient: { getAccessToken: () => "access-1" },
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return new Response(JSON.stringify({ id: "schedule-1", title: "수정" }), { status: 200 });
+    },
+  });
+  await schedules.update("schedule-1", { title: "수정", location: null });
+  assert.equal(calls[0].url, "https://api.ggang.cloud/v1/core/schedules/schedule-1");
+  assert.equal(calls[0].options.method, "PATCH");
+  assert.equal(calls[0].options.headers.Authorization, "Bearer access-1");
+  assert.deepEqual(JSON.parse(calls[0].options.body), { title: "수정", location: null });
+});
+
+test("concurrent schedule 401s share one refresh and retry once with the same create key", async () => {
+  const session = storage();
+  let releaseRefresh;
+  let refreshCount = 0;
+  const auth = new AuthClient({
+    storage: session,
+    fetchImpl: async (url) => {
+      if (url.endsWith("/refresh")) {
+        refreshCount++;
+        await new Promise((resolve) => { releaseRefresh = resolve; });
+        return tokenResponse("access-2", "refresh-2");
+      }
+      return tokenResponse();
+    },
+  });
+  await auth.login({ email: "user@example.com", password: "secret" });
+  const calls = [];
+  const schedules = new ScheduleClient({
+    authClient: auth,
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return options.headers.Authorization === "Bearer access-1"
+        ? new Response(null, { status: 401 })
+        : new Response(JSON.stringify({ id: "schedule-1" }), { status: 201 });
+    },
+  });
+  const first = schedules.create({ title: "Meeting" }, "create-key");
+  const second = schedules.create({ title: "Meeting" }, "create-key");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(refreshCount, 1);
+  releaseRefresh();
+  assert.deepEqual(await Promise.all([first, second]), [{ id: "schedule-1" }, { id: "schedule-1" }]);
+  assert.equal(calls.length, 4);
+  assert.deepEqual(calls.map(({ options }) => options.headers["Idempotency-Key"]), Array(4).fill("create-key"));
+  assert.deepEqual(calls.map(({ options }) => options.body), Array(4).fill('{"title":"Meeting"}'));
+  assert.deepEqual(calls.map(({ options }) => options.headers.Authorization), ["Bearer access-1", "Bearer access-1", "Bearer access-2", "Bearer access-2"]);
+});
+
+test("a late refresh response cannot restore a logged-out session", async () => {
+  let releaseRefresh;
+  const auth = new AuthClient({
+    storage: storage(),
+    fetchImpl: async (url) => url.endsWith("/refresh")
+      ? new Promise((resolve) => { releaseRefresh = () => resolve(tokenResponse("access-2", "refresh-2")); })
+      : tokenResponse(),
+  });
+  await auth.login({ email: "user@example.com", password: "secret" });
+  const pending = auth.refresh();
+  auth.clear();
+  releaseRefresh();
+  assert.equal(await pending, null);
+  assert.equal(auth.hasSession(), false);
+});
+
+test("an old schedule request is not retried after a different login", async () => {
+  let rejectOldRequest;
+  let logins = 0;
+  const auth = new AuthClient({
+    storage: storage(),
+    fetchImpl: async () => tokenResponse(`access-${++logins}`, `refresh-${logins}`),
+  });
+  await auth.login({ email: "first@example.com", password: "secret" });
+  const calls = [];
+  const schedules = new ScheduleClient({
+    authClient: auth,
+    fetchImpl: async (url, options) => {
+      calls.push(options.headers.Authorization);
+      return new Promise((resolve) => { rejectOldRequest = () => resolve(new Response(null, { status: 401 })); });
+    },
+  });
+  const pending = schedules.list();
+  auth.clear();
+  await auth.login({ email: "second@example.com", password: "secret" });
+  rejectOldRequest();
+  await assert.rejects(pending, /HTTP 401/);
+  assert.deepEqual(calls, ["Bearer access-1"]);
+});
+
+test("a pending refresh cannot retry an old request under a new login", async () => {
+  let releaseRefresh;
+  let logins = 0;
+  const auth = new AuthClient({
+    storage: storage(),
+    fetchImpl: async (url) => url.endsWith("/refresh")
+      ? new Promise((resolve) => { releaseRefresh = () => resolve(tokenResponse("late-access", "late-refresh")); })
+      : tokenResponse(`access-${++logins}`, `refresh-${logins}`),
+  });
+  await auth.login({ email: "first@example.com", password: "secret" });
+  const calls = [];
+  const schedules = new ScheduleClient({
+    authClient: auth,
+    fetchImpl: async (url, options) => {
+      calls.push(options.headers.Authorization);
+      return new Response(null, { status: 401 });
+    },
+  });
+  const pending = schedules.list();
+  await new Promise((resolve) => setImmediate(resolve));
+  auth.clear();
+  await auth.login({ email: "second@example.com", password: "secret" });
+  releaseRefresh();
+  await assert.rejects(pending, /HTTP 401/);
+  assert.equal(auth.getAccessToken(), "access-2");
+  assert.deepEqual(calls, ["Bearer access-1"]);
+});

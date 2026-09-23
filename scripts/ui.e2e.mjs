@@ -5,7 +5,7 @@ const tokens = { access_token: "test-access", refresh_token: "test-refresh", exp
 
 // No account or schedule is written to a real service by these browser checks.
 async function mockApi(page) {
-  const state = { loginStatus: 200, refreshStatus: 200, listStatus: 200, saveStatus: 201, deleteStatus: 204, deleteGate: null, schedules: [], calls: [] };
+  const state = { loginStatus: 200, refreshStatus: 200, listStatus: 200, saveStatus: 201, updateStatus: 200, deleteStatus: 204, deleteGate: null, schedules: [], calls: [] };
   await page.route("**/*", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -33,6 +33,13 @@ async function mockApi(page) {
         state.schedules.push(schedule);
         return route.fulfill({ status: 201, json: schedule });
       }
+    }
+    if (method === "PATCH" && url.pathname.startsWith("/v1/core/schedules/")) {
+      if (state.updateStatus !== 200) return route.fulfill({ status: state.updateStatus, json: { error: "unavailable" } });
+      const schedule = state.schedules.find((item) => item.id === url.pathname.split("/").at(-1));
+      if (!schedule) return route.fulfill({ status: 404, json: { error: "not_found" } });
+      Object.assign(schedule, body);
+      return route.fulfill({ status: 200, json: schedule });
     }
     if (method === "DELETE" && url.pathname.startsWith("/v1/core/schedules/")) {
       if (state.deleteGate) await state.deleteGate;
@@ -160,6 +167,8 @@ test("list retry and failed save preserve input, successful save renders escaped
   await expect(page.locator("[data-view] img")).toHaveCount(0);
   const saved = state.calls.findLast((call) => call.method === "POST" && call.path.endsWith("/schedules"));
   expect(saved.headers.authorization).toBe("Bearer test-access");
+  expect(saved.headers["idempotency-key"]).toBeTruthy();
+  expect(state.calls.filter((call) => call.method === "POST" && call.path.endsWith("/schedules")).map((call) => call.headers["idempotency-key"])).toEqual([saved.headers["idempotency-key"], saved.headers["idempotency-key"]]);
   expect(saved.body).toMatchObject({ title, location: "온라인", status: "confirmed", all_day: false, source: "manual" });
   await noPageOverflow(page);
   await page.screenshot({ path: testInfo.outputPath("schedules.png"), fullPage: true, animations: "disabled" });
@@ -185,7 +194,7 @@ test("schedule deletion confirms the title and waits for the server", async ({ p
   let completeDelete;
   state.deleteGate = new Promise((resolve) => { completeDelete = resolve; });
   await row.getByRole("button", { name: "프로젝트 회고 일정 삭제" }).click();
-  await expect(row.getByRole("button")).toBeDisabled();
+  await expect(row.getByRole("button", { name: "프로젝트 회고 일정 삭제" })).toBeDisabled();
   await expect(row).toBeVisible();
   completeDelete();
   await expect(row).toHaveCount(0);
@@ -193,6 +202,32 @@ test("schedule deletion confirms the title and waits for the server", async ({ p
   expect(state.calls.findLast((call) => call.method === "DELETE").path).toBe("/v1/core/schedules/future");
   await navigate(page, "dashboard");
   await expect(page.locator("[data-view]")).not.toContainText("프로젝트 회고");
+});
+
+test("schedule edit preserves fields on failure and updates only after success", async ({ page }) => {
+  const state = await mockApi(page);
+  state.schedules = [{ id: "future", title: "프로젝트 회고", start_at: "2099-06-15T05:30:00Z", location: "회의실", description: "기존 메모", status: "confirmed", all_day: false }];
+  await page.goto("/");
+  await login(page);
+  await navigate(page, "schedules");
+  await page.getByRole("button", { name: "프로젝트 회고 일정 수정" }).click();
+  const form = page.locator("[data-schedule-form]");
+  await expect(form.locator("[name=title]")).toHaveValue("프로젝트 회고");
+  await form.locator("[name=title]").fill("변경된 회고");
+  await form.locator("[name=location]").fill("");
+  state.updateStatus = 503;
+  await form.locator("button[type=submit]").click();
+  await expect(form.locator("[name=title]")).toHaveValue("변경된 회고");
+  await expect(page.locator("[data-view]")).toContainText("저장하지 못");
+  state.updateStatus = 200;
+  await form.locator("button[type=submit]").click();
+  await expect(page).toHaveURL(/#schedules$/);
+  await expect(page.locator("[data-view]")).toContainText("변경된 회고");
+  const request = state.calls.findLast((call) => call.method === "PATCH");
+  expect(request.path).toBe("/v1/core/schedules/future");
+  expect(request.body).toMatchObject({ title: "변경된 회고", location: null, status: "confirmed" });
+  expect(request.body).not.toHaveProperty("source");
+  expect(request.body).not.toHaveProperty("all_day");
 });
 
 test("theme persists and mobile navigation closes on Escape and selection", async ({ page }, testInfo) => {

@@ -48,6 +48,7 @@ export class AuthClient {
     this.config = config ?? readConfig();
     this.storage = storage;
     this.fetchImpl = fetchImpl;
+    this.sessionVersion = 0;
   }
 
   hasSession() {
@@ -61,6 +62,8 @@ export class AuthClient {
   }
 
   clear() {
+    this.sessionVersion++;
+    this.refreshPromise = null;
     this.storage?.removeItem(accessTokenKey);
     this.storage?.removeItem(refreshTokenKey);
     this.storage?.removeItem(expiresAtKey);
@@ -107,22 +110,30 @@ export class AuthClient {
   async login(credentials) {
     const pair = await this.request("/login", credentials);
     this.saveTokenPair(pair);
+    this.sessionVersion++;
     return pair;
   }
 
-  async refresh() {
+  refresh() {
+    if (this.refreshPromise) return this.refreshPromise;
     const refreshToken = this.storage?.getItem(refreshTokenKey);
-    if (!refreshToken) return null;
-    try {
-      const pair = await this.request("/refresh", {
-        refresh_token: refreshToken,
+    if (!refreshToken) return Promise.resolve(null);
+    const sessionVersion = this.sessionVersion;
+    const pending = this.request("/refresh", { refresh_token: refreshToken })
+      .then((pair) => {
+        if (this.sessionVersion !== sessionVersion || this.storage?.getItem(refreshTokenKey) !== refreshToken) return null;
+        this.saveTokenPair(pair);
+        return pair;
+      })
+      .catch((error) => {
+        if (error.status === 401 && this.sessionVersion === sessionVersion && this.storage?.getItem(refreshTokenKey) === refreshToken) this.clear();
+        throw error;
       });
-      this.saveTokenPair(pair);
-      return pair;
-    } catch (error) {
-      if (error.status === 401) this.clear();
-      throw error;
-    }
+    const tracked = pending.finally(() => {
+      if (this.refreshPromise === tracked) this.refreshPromise = null;
+    });
+    this.refreshPromise = tracked;
+    return this.refreshPromise;
   }
 
   async logout() {
@@ -153,16 +164,23 @@ export class ScheduleClient {
 
   async request(path = "", options = {}) {
     const token = this.authClient?.getAccessToken();
+    const sessionVersion = this.authClient?.sessionVersion;
     if (!token) throw new Error("Sign in is required to load schedules.");
-    const response = await this.fetchImpl(this.url(path), {
+    const send = (accessToken) => this.fetchImpl(this.url(path), {
       ...options,
       headers: {
         Accept: "application/json",
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${accessToken}`,
         ...(options.body ? { "Content-Type": "application/json" } : {}),
         ...options.headers,
       },
     });
+    let response = await send(token);
+    if (response.status === 401 && this.authClient?.hasSession?.() && this.authClient.sessionVersion === sessionVersion) {
+      if (this.authClient.getAccessToken() === token) await this.authClient.refresh();
+      const renewedToken = this.authClient.getAccessToken();
+      if (renewedToken && this.authClient.sessionVersion === sessionVersion) response = await send(renewedToken);
+    }
     if (!response.ok) {
       const error = new Error(
         `Schedule request failed (HTTP ${response.status})`,
@@ -183,8 +201,19 @@ export class ScheduleClient {
     );
   }
 
-  create(schedule) {
-    return this.request("", { method: "POST", body: JSON.stringify(schedule) });
+  create(schedule, idempotencyKey) {
+    return this.request("", {
+      method: "POST",
+      body: JSON.stringify(schedule),
+      ...(idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : {}),
+    });
+  }
+
+  update(id, changes) {
+    return this.request(`/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(changes),
+    });
   }
 
   delete(id) {

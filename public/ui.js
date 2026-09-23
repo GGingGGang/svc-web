@@ -29,6 +29,12 @@ function scheduleTime(schedule) {
         minute: "2-digit",
       }).format(new Date(schedule.start_at));
 }
+function localDateTime(value) {
+  const date = new Date(value);
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000)
+    .toISOString()
+    .slice(0, 16);
+}
 function emptyMarkup() {
   return `<div class="empty"><strong>아직 일정이 없습니다.</strong><span>첫 일정을 추가하면 여기에서 확인할 수 있어요.</span></div>`;
 }
@@ -58,7 +64,7 @@ function schedulesView(state) {
   const rows = state.items
     .map(
       (item) =>
-        `<tr><td><strong>${escapeHtml(item.title)}</strong></td><td>${scheduleDate(item)} ${scheduleTime(item)}</td><td>${escapeHtml(item.location || "-")}</td><td><span class="badge">${escapeHtml(item.status || "confirmed")}</span></td><td><button class="btn btn-secondary" type="button" data-delete-id="${escapeHtml(item.id)}" aria-label="${escapeHtml(item.title)} 일정 삭제">삭제</button></td></tr>`,
+        `<tr><td><strong>${escapeHtml(item.title)}</strong></td><td>${scheduleDate(item)} ${scheduleTime(item)}</td><td>${escapeHtml(item.location || "-")}</td><td><span class="badge">${escapeHtml(item.status || "confirmed")}</span></td><td><button class="btn btn-secondary" type="button" data-edit-id="${escapeHtml(item.id)}" aria-label="${escapeHtml(item.title)} 일정 수정">수정</button> <button class="btn btn-secondary" type="button" data-delete-id="${escapeHtml(item.id)}" aria-label="${escapeHtml(item.title)} 일정 삭제">삭제</button></td></tr>`,
     )
     .join("");
   const body = state.loading
@@ -70,13 +76,13 @@ function schedulesView(state) {
         : emptyMarkup();
   return `<div class="page-heading"><div><h1>모든 일정</h1><p>Core API에서 관리되는 내 일정입니다.</p></div><a class="btn btn-primary" href="#create">${icon("M12 5v14M5 12h14")}일정 만들기</a></div><section class="card">${body}</section>`;
 }
-function createView(draft = {}) {
+function createView(draft = {}, editing = false) {
   const now =
     draft.start_at ||
     new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
       .toISOString()
       .slice(0, 16);
-  return `<div class="page-heading"><div><h1>일정 만들기</h1><p>저장하면 Core API에 바로 반영됩니다.</p></div></div><form class="card form-card" data-schedule-form><div class="form-grid"><label class="field"><span>제목</span><input class="input" name="title" maxlength="255" required placeholder="팀 회의" value="${escapeHtml(draft.title || "")}"></label><label class="field"><span>시작 시간</span><input class="input" name="start_at" type="datetime-local" required value="${escapeHtml(now)}"></label><label class="field"><span>장소</span><input class="input" name="location" maxlength="255" placeholder="온라인 또는 장소" value="${escapeHtml(draft.location || "")}"></label><label class="field"><span>상태</span><select class="select" name="status"><option value="confirmed" ${draft.status === "tentative" || draft.status === "cancelled" ? "" : "selected"}>확정</option><option value="tentative" ${draft.status === "tentative" ? "selected" : ""}>미정</option><option value="cancelled" ${draft.status === "cancelled" ? "selected" : ""}>취소</option></select></label><label class="field span-2"><span>설명</span><textarea class="textarea" name="description" placeholder="선택 사항">${escapeHtml(draft.description || "")}</textarea></label></div><div class="form-actions"><a class="btn btn-secondary" href="#schedules">취소</a><span class="spacer"></span><button type="submit" class="btn btn-primary">일정 저장</button></div></form>`;
+  return `<div class="page-heading"><div><h1>${editing ? "일정 수정" : "일정 만들기"}</h1><p>저장하면 Core API에 바로 반영됩니다.</p></div></div><form class="card form-card" data-schedule-form><div class="form-grid"><label class="field"><span>제목</span><input class="input" name="title" maxlength="255" required placeholder="팀 회의" value="${escapeHtml(draft.title || "")}"></label><label class="field"><span>시작 시간</span><input class="input" name="start_at" type="datetime-local" required value="${escapeHtml(now)}"></label><label class="field"><span>장소</span><input class="input" name="location" maxlength="255" placeholder="온라인 또는 장소" value="${escapeHtml(draft.location || "")}"></label><label class="field"><span>상태</span><select class="select" name="status"><option value="confirmed" ${draft.status === "tentative" || draft.status === "cancelled" ? "" : "selected"}>확정</option><option value="tentative" ${draft.status === "tentative" ? "selected" : ""}>미정</option><option value="cancelled" ${draft.status === "cancelled" ? "selected" : ""}>취소</option></select></label><label class="field span-2"><span>설명</span><textarea class="textarea" name="description" placeholder="선택 사항">${escapeHtml(draft.description || "")}</textarea></label></div><div class="form-actions"><a class="btn btn-secondary" href="#schedules">취소</a><span class="spacer"></span><button type="submit" class="btn btn-primary">일정 저장</button></div></form>`;
 }
 
 function init() {
@@ -87,11 +93,12 @@ function init() {
   const application = document.querySelector("[data-authenticated]");
   const view = document.querySelector("[data-view]");
   const toast = document.querySelector("[data-toast]");
-  const state = { items: [], loading: false, error: "", draft: {} };
+  const state = { items: [], loading: false, error: "", draft: {}, editDraft: {}, editingId: null, createKey: null, createFingerprint: null };
   const titles = {
     dashboard: ["WORKSPACE", "개요"],
     schedules: ["SCHEDULES", "모든 일정"],
     create: ["SCHEDULES", "일정 만들기"],
+    edit: ["SCHEDULES", "일정 수정"],
   };
   let toastTimer;
   const currentRoute = () =>
@@ -153,6 +160,10 @@ function init() {
   };
   const render = () => {
     const route = currentRoute();
+    if (route === "edit" && !state.editingId) {
+      location.hash = "#schedules";
+      return;
+    }
     document
       .querySelectorAll("[data-route]")
       .forEach((link) =>
@@ -163,8 +174,8 @@ function init() {
     view.innerHTML =
       route === "schedules"
         ? schedulesView(state)
-        : route === "create"
-          ? createView(state.draft)
+        : route === "create" || route === "edit"
+          ? createView(route === "edit" ? state.editDraft : state.draft, route === "edit")
           : dashboardView(state);
     view
       .querySelector("[data-reload]")
@@ -174,6 +185,9 @@ function init() {
       ?.addEventListener("submit", saveSchedule);
     view.querySelectorAll("[data-delete-id]").forEach((button) =>
       button.addEventListener("click", deleteSchedule),
+    );
+    view.querySelectorAll("[data-edit-id]").forEach((button) =>
+      button.addEventListener("click", editSchedule),
     );
   };
   const loadSchedules = async () => {
@@ -208,24 +222,47 @@ function init() {
     if (!location.hash) location.hash = "#dashboard";
     await loadSchedules();
   };
+  const editSchedule = (event) => {
+    const item = state.items.find((schedule) => schedule.id === event.currentTarget.dataset.editId);
+    if (!item) return;
+    state.editingId = item.id;
+    state.editDraft = { ...item, start_at: localDateTime(item.start_at) };
+    location.hash = "#edit";
+    render();
+  };
   const saveSchedule = async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
     const values = Object.fromEntries(new FormData(form));
-    state.draft = values;
+    const editing = currentRoute() === "edit";
+    if (editing) state.editDraft = values;
+    else state.draft = values;
     form.querySelector(".alert")?.remove();
     setBusy(form, true, "저장 중…");
     try {
-      await schedules.create({
+      const changes = {
         title: values.title,
         start_at: new Date(values.start_at).toISOString(),
         location: values.location || null,
         description: values.description || null,
         status: values.status,
-        all_day: false,
-        source: "manual",
-      });
-      state.draft = {};
+      };
+      if (editing) {
+        await schedules.update(state.editingId, changes);
+        state.editDraft = {};
+        state.editingId = null;
+      } else {
+        const schedule = { ...changes, all_day: false, source: "manual" };
+        const fingerprint = JSON.stringify(schedule);
+        if (state.createFingerprint !== fingerprint) {
+          state.createFingerprint = fingerprint;
+          state.createKey = crypto.randomUUID();
+        }
+        await schedules.create(schedule, state.createKey);
+        state.draft = {};
+        state.createKey = null;
+        state.createFingerprint = null;
+      }
       notify("일정이 저장되었습니다.");
       location.hash = "#schedules";
       await loadSchedules();
@@ -330,6 +367,10 @@ function init() {
       }
       state.items = [];
       state.draft = {};
+      state.createKey = null;
+      state.createFingerprint = null;
+      state.editDraft = {};
+      state.editingId = null;
       state.error = "";
       view.replaceChildren();
       closeMenu();
