@@ -5,7 +5,7 @@ const tokens = { access_token: "test-access", refresh_token: "test-refresh", exp
 
 // No account or schedule is written to a real service by these browser checks.
 async function mockApi(page) {
-  const state = { loginStatus: 200, refreshStatus: 200, listStatus: 200, saveStatus: 201, schedules: [], calls: [] };
+  const state = { loginStatus: 200, refreshStatus: 200, listStatus: 200, saveStatus: 201, deleteStatus: 204, deleteGate: null, schedules: [], calls: [] };
   await page.route("**/*", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -33,6 +33,12 @@ async function mockApi(page) {
         state.schedules.push(schedule);
         return route.fulfill({ status: 201, json: schedule });
       }
+    }
+    if (method === "DELETE" && url.pathname.startsWith("/v1/core/schedules/")) {
+      if (state.deleteGate) await state.deleteGate;
+      if (state.deleteStatus !== 204) return route.fulfill({ status: state.deleteStatus, json: { error: "unavailable" } });
+      state.schedules = state.schedules.filter((schedule) => schedule.id !== url.pathname.split("/").at(-1));
+      return route.fulfill({ status: 204 });
     }
     return route.fulfill({ status: 404, json: { error: "unexpected_test_request" } });
   });
@@ -157,6 +163,36 @@ test("list retry and failed save preserve input, successful save renders escaped
   expect(saved.body).toMatchObject({ title, location: "온라인", status: "confirmed", all_day: false, source: "manual" });
   await noPageOverflow(page);
   await page.screenshot({ path: testInfo.outputPath("schedules.png"), fullPage: true, animations: "disabled" });
+});
+
+test("schedule deletion confirms the title and waits for the server", async ({ page }) => {
+  const state = await mockApi(page);
+  state.schedules = [{ id: "future", title: "프로젝트 회고", start_at: "2099-06-15T05:30:00Z", status: "confirmed" }];
+  page.on("dialog", async (dialog) => {
+    expect(dialog.message()).toContain("프로젝트 회고");
+    expect(dialog.message()).toContain("복구할 수 없습니다");
+    await dialog.accept();
+  });
+  await page.goto("/");
+  await login(page);
+  await navigate(page, "schedules");
+  const row = page.locator("tr", { hasText: "프로젝트 회고" });
+  state.deleteStatus = 503;
+  await row.getByRole("button", { name: "프로젝트 회고 일정 삭제" }).click();
+  await expect(page.locator("[data-toast]")).toContainText("삭제하지 못했습니다");
+  await expect(row).toBeVisible();
+  state.deleteStatus = 204;
+  let completeDelete;
+  state.deleteGate = new Promise((resolve) => { completeDelete = resolve; });
+  await row.getByRole("button", { name: "프로젝트 회고 일정 삭제" }).click();
+  await expect(row.getByRole("button")).toBeDisabled();
+  await expect(row).toBeVisible();
+  completeDelete();
+  await expect(row).toHaveCount(0);
+  await expect(page.locator("[data-toast]")).toContainText("삭제되었습니다");
+  expect(state.calls.findLast((call) => call.method === "DELETE").path).toBe("/v1/core/schedules/future");
+  await navigate(page, "dashboard");
+  await expect(page.locator("[data-view]")).not.toContainText("프로젝트 회고");
 });
 
 test("theme persists and mobile navigation closes on Escape and selection", async ({ page }, testInfo) => {

@@ -186,6 +186,10 @@ export class ScheduleClient {
   create(schedule) {
     return this.request("", { method: "POST", body: JSON.stringify(schedule) });
   }
+
+  delete(id) {
+    return this.request(`/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
 }
 
 export async function fetchJson(path, fallback) {

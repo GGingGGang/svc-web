@@ -93,3 +93,19 @@ test("schedule client follows the core schedule contract with bearer auth", asyn
   assert.equal(calls[0].url, "https://api.ggang.cloud/v1/core/schedules?status=confirmed");
   assert.equal(calls[0].options.headers.Authorization, "Bearer access-1");
 });
+
+test("schedule delete waits for a 204 response and reports failure", async () => {
+  const calls = [];
+  const schedules = new ScheduleClient({
+    authClient: { getAccessToken: () => "access-1" },
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return new Response(null, { status: calls.length === 1 ? 503 : 204 });
+    },
+  });
+  await assert.rejects(() => schedules.delete("schedule-1"), /HTTP 503/);
+  assert.equal(await schedules.delete("schedule-1"), null);
+  assert.equal(calls[0].url, "https://api.ggang.cloud/v1/core/schedules/schedule-1");
+  assert.equal(calls[0].options.method, "DELETE");
+  assert.equal(calls[0].options.headers.Authorization, "Bearer access-1");
+});

@@ -58,7 +58,7 @@ function schedulesView(state) {
   const rows = state.items
     .map(
       (item) =>
-        `<tr><td><strong>${escapeHtml(item.title)}</strong></td><td>${scheduleDate(item)} ${scheduleTime(item)}</td><td>${escapeHtml(item.location || "-")}</td><td><span class="badge">${escapeHtml(item.status || "confirmed")}</span></td></tr>`,
+        `<tr><td><strong>${escapeHtml(item.title)}</strong></td><td>${scheduleDate(item)} ${scheduleTime(item)}</td><td>${escapeHtml(item.location || "-")}</td><td><span class="badge">${escapeHtml(item.status || "confirmed")}</span></td><td><button class="btn btn-secondary" type="button" data-delete-id="${escapeHtml(item.id)}" aria-label="${escapeHtml(item.title)} 일정 삭제">삭제</button></td></tr>`,
     )
     .join("");
   const body = state.loading
@@ -66,7 +66,7 @@ function schedulesView(state) {
     : state.error
       ? errorMarkup(state.error)
       : state.items.length
-        ? `<div class="table-wrap"><table class="schedule-table"><thead><tr><th>제목</th><th>일시</th><th>장소</th><th>상태</th></tr></thead><tbody>${rows}</tbody></table></div>`
+        ? `<div class="table-wrap"><table class="schedule-table"><thead><tr><th>제목</th><th>일시</th><th>장소</th><th>상태</th><th>작업</th></tr></thead><tbody>${rows}</tbody></table></div>`
         : emptyMarkup();
   return `<div class="page-heading"><div><h1>모든 일정</h1><p>Core API에서 관리되는 내 일정입니다.</p></div><a class="btn btn-primary" href="#create">${icon("M12 5v14M5 12h14")}일정 만들기</a></div><section class="card">${body}</section>`;
 }
@@ -172,6 +172,9 @@ function init() {
     view
       .querySelector("[data-schedule-form]")
       ?.addEventListener("submit", saveSchedule);
+    view.querySelectorAll("[data-delete-id]").forEach((button) =>
+      button.addEventListener("click", deleteSchedule),
+    );
   };
   const loadSchedules = async () => {
     state.loading = true;
@@ -233,6 +236,23 @@ function init() {
       alert.setAttribute("role", "alert");
       alert.textContent = `일정을 저장하지 못했습니다. ${error.message}`;
       form.prepend(alert);
+    }
+  };
+  const deleteSchedule = async (event) => {
+    const button = event.currentTarget;
+    const item = state.items.find((schedule) => schedule.id === button.dataset.deleteId);
+    if (!item || !confirm(`'${item.title}' 일정을 삭제할까요? 삭제하면 복구할 수 없습니다.`)) return;
+    button.disabled = true;
+    button.textContent = "삭제 중…";
+    try {
+      await schedules.delete(item.id);
+      state.items = state.items.filter((schedule) => schedule.id !== item.id);
+      render();
+      notify("일정이 삭제되었습니다.");
+    } catch (error) {
+      button.disabled = false;
+      button.textContent = "삭제";
+      notify(`일정을 삭제하지 못했습니다. 다시 시도하세요. (${error.message})`, true);
     }
   };
   document.querySelector("[data-timezone]").value = getBrowserTimezone();
