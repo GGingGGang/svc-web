@@ -5,7 +5,7 @@ const tokens = { access_token: "test-access", refresh_token: "test-refresh", exp
 
 // No account or schedule is written to a real service by these browser checks.
 async function mockApi(page) {
-  const state = { loginStatus: 200, registerStatus: 201, registerMessage: "Invalid email", refreshStatus: 200, listStatus: 200, saveStatus: 201, failTitle: null, extractStatus: 200, extractErrorCode: "extraction_failed", extractCandidates: [], extractTruncated: false, updateStatus: 200, deleteStatus: 204, deleteGate: null, schedules: [], calls: [] };
+  const state = { loginStatus: 200, registerStatus: 201, registerMessage: "Invalid email", refreshStatus: 200, listStatus: 200, saveStatus: 201, failTitle: null, extractStatus: 200, extractErrorCode: "extraction_failed", extractCandidates: [], extractTruncated: false, updateStatus: 200, deleteStatus: 204, deleteGate: null, detailGate: null, schedules: [], calls: [] };
   await page.route("**/*", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -35,6 +35,11 @@ async function mockApi(page) {
         return route.fulfill({ status: 201, json: schedule });
       }
     }
+    if (method === "GET" && url.pathname.startsWith("/v1/core/schedules/")) {
+      if (state.detailGate) await state.detailGate;
+      const schedule = state.schedules.find((item) => item.id === url.pathname.split("/").at(-1));
+      return route.fulfill({ status: schedule ? 200 : 404, json: schedule ? { ...schedule, reminders: [] } : { error: "not_found" } });
+    }
     if (method === "PATCH" && url.pathname.startsWith("/v1/core/schedules/")) {
       if (state.updateStatus !== 200) return route.fulfill({ status: state.updateStatus, json: { error: "unavailable" } });
       const schedule = state.schedules.find((item) => item.id === url.pathname.split("/").at(-1));
@@ -61,9 +66,11 @@ async function login(page) {
 }
 
 async function navigate(page, route) {
+  await expect(page.locator("[data-authenticated]")).toBeVisible();
   const menu = page.locator("button[data-menu-toggle]").first();
-  if (await menu.isVisible()) await menu.click();
-  await page.locator(`[data-route="${route}"]`).click();
+  const link = page.locator(`[data-route="${route}"]`);
+  if (!(await link.isVisible()) && await menu.isVisible()) await menu.click();
+  await link.click();
 }
 
 async function noPageOverflow(page) {
@@ -188,6 +195,7 @@ test("list retry and failed save preserve input, successful save renders escaped
   await expect(page.locator("[data-view]")).not.toContainText("지난 일정");
   await page.screenshot({ path: testInfo.outputPath("dashboard-populated.png"), fullPage: true, animations: "disabled" });
   await navigate(page, "schedules");
+  await page.locator("[data-toggle-past]").click();
   await expect(page.locator("[data-view]")).toContainText("지난 일정");
   expect(state.calls.findLast((call) => call.method === "GET" && call.path.endsWith("/schedules")).query).toBe("");
   await navigate(page, "create");
@@ -244,6 +252,9 @@ test("schedule deletion confirms the title and waits for the server", async ({ p
   await expect(row).toHaveCount(0);
   await expect(page.locator("[data-toast]")).toContainText("삭제되었습니다");
   expect(state.calls.findLast((call) => call.method === "DELETE").path).toBe("/v1/core/schedules/future");
+  const deletes = state.calls.filter((call) => call.method === "DELETE");
+  expect(deletes[0].headers["idempotency-key"]).toBeTruthy();
+  expect(deletes[1].headers["idempotency-key"]).toBe(deletes[0].headers["idempotency-key"]);
   await navigate(page, "dashboard");
   await expect(page.locator("[data-view]")).not.toContainText("프로젝트 회고");
 });
@@ -272,6 +283,9 @@ test("schedule edit preserves fields on failure and updates only after success",
   expect(request.body).toMatchObject({ title: "변경된 회고", location: null, status: "confirmed" });
   expect(request.body).not.toHaveProperty("source");
   expect(request.body).not.toHaveProperty("all_day");
+  const updates = state.calls.filter((call) => call.method === "PATCH");
+  expect(updates[0].headers["idempotency-key"]).toBeTruthy();
+  expect(updates[1].headers["idempotency-key"]).toBe(updates[0].headers["idempotency-key"]);
 });
 
 test("theme persists and mobile navigation closes on Escape and selection", async ({ page }, testInfo) => {
@@ -381,4 +395,91 @@ test("AI with no configured key is disabled until a private key is entered", asy
   await expect(page.locator('[data-view] a[href="#create"]')).toBeVisible();
   await form.locator("[name=api_key]").fill("private-test-key");
   await expect(form.locator("button[type=submit]")).toBeEnabled();
+});
+
+test("manual schedule keeps optional time fields and verifies the saved detail", async ({ page }) => {
+  const state = await mockApi(page);
+  await page.goto("/");
+  await login(page);
+  await navigate(page, "create");
+  const form = page.locator("[data-schedule-form]");
+  await form.locator("[name=title]").fill("종일 행사");
+  await form.locator("[name=start_at]").fill("2030-01-02T09:00");
+  await form.locator("[name=end_at]").fill("2030-01-02T10:00");
+  await form.locator("[name=all_day]").check();
+  await form.locator("[name=reminder_minutes]").fill("10");
+  await form.locator("button[type=submit]").click();
+  await expect(page).toHaveURL(/#schedules$/);
+  const create = state.calls.find((call) => call.method === "POST" && call.path.endsWith("/schedules"));
+  expect(create.body).toMatchObject({ all_day: true, reminders: [{ minutes_before: 10, channel: "none" }] });
+  expect(state.calls.some((call) => call.method === "GET" && call.path.endsWith("/schedules/test-schedule"))).toBe(true);
+  await page.locator("[data-detail-id]").click();
+  await expect(page.locator("dialog")).toContainText("종일 행사");
+  await page.locator("[data-close-detail]").click();
+});
+
+test("logout discards a late detail response", async ({ page }) => {
+  const state = await mockApi(page);
+  state.schedules = [{ id: "future", title: "비공개 일정", start_at: "2030-01-02T09:00:00Z", status: "confirmed", source: "manual" }];
+  let release;
+  state.detailGate = new Promise((resolve) => { release = resolve; });
+  await page.goto("/");
+  await login(page);
+  await navigate(page, "schedules");
+  await page.locator("[data-detail-id]").click();
+  await expect.poll(() => state.calls.some((call) => call.method === "GET" && call.path.endsWith("/schedules/future"))).toBe(true);
+  const menu = page.locator("button[data-menu-toggle]").first();
+  if (await menu.isVisible()) await menu.click();
+  await page.locator("[data-logout]").click();
+  release();
+  await expect(page.locator("[data-authenticated]")).toBeHidden();
+  await expect(page.locator("dialog")).toHaveCount(0);
+  await expect(page.locator("[data-view]")).toBeEmpty();
+});
+
+test("schedule period uses an inclusive local end date and keeps dashboard data", async ({ page }) => {
+  const state = await mockApi(page);
+  state.schedules = [{ id: "future", title: "기간 일정", start_at: "2030-01-02T09:00:00Z", status: "confirmed", source: "manual" }];
+  await page.goto("/");
+  await login(page);
+  await navigate(page, "schedules");
+  const form = page.locator("[data-period-form]");
+  await form.locator("[name=from]").fill("2030-01-01");
+  await form.locator("[name=to]").fill("2030-01-02");
+  await form.locator("button[type=submit]").click();
+  await expect.poll(() => state.calls.findLast((call) => call.method === "GET" && call.path.endsWith("/schedules"))?.query).toContain("from=");
+  const query = new URLSearchParams(state.calls.findLast((call) => call.method === "GET" && call.path.endsWith("/schedules")).query);
+  expect(new Date(query.get("to")).getTime() - new Date(query.get("from")).getTime()).toBe(2 * 86400000);
+  await expect(page.locator("[data-view]")).toContainText("기간 일정");
+  await navigate(page, "dashboard");
+  await expect(page.locator("[data-view]")).toContainText("기간 일정");
+});
+
+test("stable schedule pages avoid duplicates and refresh latest results", async ({ page }) => {
+  const state = await mockApi(page);
+  state.schedules = Array.from({ length: 25 }, (_, index) => ({ id: `s-${index}`, title: `일정 ${String(index).padStart(2, "0")}`, start_at: `2030-02-${String(index + 1).padStart(2, "0")}T09:00:00Z`, status: "confirmed", source: "manual" }));
+  await page.goto("/");
+  await login(page);
+  await navigate(page, "schedules");
+  await expect(page.locator("[data-view]")).toContainText("1 / 2쪽");
+  await expect(page.locator("[data-view]")).toContainText("일정 00");
+  await page.locator("[data-page=next]").click();
+  await expect(page.locator("[data-view]")).toContainText("일정 20");
+  await expect(page.locator("[data-view]")).not.toContainText("일정 00");
+  state.schedules.push({ id: "s-25", title: "일정 25", start_at: "2030-02-26T09:00:00Z", status: "confirmed", source: "manual" });
+  await page.locator("[data-refresh-list]").click();
+  await expect(page.locator("[data-view]")).toContainText("일정 25");
+});
+
+test("changing display timezone leaves stored instants unchanged", async ({ page }) => {
+  const state = await mockApi(page);
+  state.schedules = [{ id: "future", title: "세계 회의", start_at: "2030-01-02T09:00:00Z", status: "confirmed", source: "manual" }];
+  await page.goto("/");
+  await login(page);
+  await navigate(page, "schedules");
+  await page.locator("[data-display-timezone]").selectOption("UTC");
+  await expect(page.locator("[data-view]")).toContainText("오전 9:00");
+  await page.locator("[data-detail-id]").click();
+  await expect(page.locator("dialog")).toContainText("표시 시간대: UTC");
+  expect(state.schedules[0].start_at).toBe("2030-01-02T09:00:00Z");
 });

@@ -140,12 +140,9 @@ export class AuthClient {
 
   async logout() {
     const refreshToken = this.storage?.getItem(refreshTokenKey);
-    try {
-      if (refreshToken)
-        await this.request("/logout", { refresh_token: refreshToken });
-    } finally {
-      this.clear();
-    }
+    this.clear();
+    if (refreshToken)
+      await this.request("/logout", { refresh_token: refreshToken });
   }
 }
 
@@ -168,8 +165,10 @@ export class ScheduleClient {
     const token = this.authClient?.getAccessToken();
     const sessionVersion = this.authClient?.sessionVersion;
     if (!token) throw new Error("Sign in is required to load schedules.");
+    const signal = options.signal ?? AbortSignal.timeout(15000);
     const send = (accessToken) => this.fetchImpl(this.url(path), {
       ...options,
+      signal,
       headers: {
         Accept: "application/json",
         Authorization: `Bearer ${accessToken}`,
@@ -204,6 +203,21 @@ export class ScheduleClient {
     );
   }
 
+  get(id) {
+    return this.request(`/${encodeURIComponent(id)}`);
+  }
+
+  addReminder(id, reminder) {
+    return this.request(`/${encodeURIComponent(id)}/reminders`, {
+      method: "POST",
+      body: JSON.stringify(reminder),
+    });
+  }
+
+  deleteReminder(id, reminderId) {
+    return this.request(`/${encodeURIComponent(id)}/reminders/${encodeURIComponent(reminderId)}`, { method: "DELETE" });
+  }
+
   create(schedule, idempotencyKey) {
     return this.request("", {
       method: "POST",
@@ -221,15 +235,19 @@ export class ScheduleClient {
     });
   }
 
-  update(id, changes) {
+  update(id, changes, idempotencyKey) {
     return this.request(`/${encodeURIComponent(id)}`, {
       method: "PATCH",
       body: JSON.stringify(changes),
+      ...(idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : {}),
     });
   }
 
-  delete(id) {
-    return this.request(`/${encodeURIComponent(id)}`, { method: "DELETE" });
+  delete(id, idempotencyKey) {
+    return this.request(`/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      ...(idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : {}),
+    });
   }
 }
 
