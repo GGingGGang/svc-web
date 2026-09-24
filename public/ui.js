@@ -39,6 +39,24 @@ function localDateTime(value) {
     .toISOString()
     .slice(0, 16);
 }
+function scheduleErrors(values) {
+  const start = Date.parse(values.start_at);
+  const end = values.end_at ? Date.parse(values.end_at) : null;
+  const minutes = values.reminder_minutes;
+  return {
+    title: !values.title?.trim() ? "제목을 입력하세요." : [...values.title].length > 255 ? "제목은 255자 이하여야 합니다." : "",
+    start_at: !values.start_at || Number.isNaN(start) ? "올바른 시작 시간을 입력하세요." : "",
+    end_at: values.end_at && (Number.isNaN(end) || end <= start) ? "종료 시간은 시작보다 늦어야 합니다." : "",
+    location: [...(values.location || "")].length > 255 ? "장소는 255자 이하여야 합니다." : "",
+    description: [...(values.description || "")].length > 10000 ? "설명은 10,000자 이하여야 합니다." : "",
+    ...(minutes === undefined ? {} : { reminder_minutes: minutes && (!Number.isInteger(Number(minutes)) || Number(minutes) < 0 || Number(minutes) > 10080) ? "리마인더는 0~10,080분 사이로 입력하세요." : "" }),
+  };
+}
+function candidateError(data) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return "AI 후보 형식이 올바르지 않습니다. 내용을 직접 확인·수정하세요.";
+  if (typeof data.title !== "string" || typeof data.start_at !== "string" || (data.end_at != null && typeof data.end_at !== "string") || (data.location != null && typeof data.location !== "string") || (data.description != null && typeof data.description !== "string") || (data.all_day != null && typeof data.all_day !== "boolean") || (data.needs_confirmation != null && typeof data.needs_confirmation !== "boolean") || (data.issues != null && (!Array.isArray(data.issues) || data.issues.some((issue) => typeof issue !== "string")))) return "AI 후보 필드 형식이 올바르지 않습니다. 내용을 직접 확인·수정하세요.";
+  return Object.values(scheduleErrors(data)).find(Boolean) || "";
+}
 function emptyMarkup() {
   return `<div class="empty"><strong>아직 일정이 없습니다.</strong><span>첫 일정을 추가하면 여기에서 확인할 수 있어요.</span></div>`;
 }
@@ -52,9 +70,18 @@ function scheduleItem(schedule) {
   return `<li class="schedule-item"><span class="schedule-date">${scheduleDate(schedule)}</span><div><strong>${escapeHtml(schedule.title)}</strong><p>${escapeHtml(schedule.location || "장소 없음")}</p></div><span class="schedule-time">${scheduleTime(schedule)}</span></li>`;
 }
 function dashboardView(state) {
-  const upcoming = state.items.filter(
-    (item) => new Date(item.start_at) >= new Date(),
-  );
+  const now = new Date();
+  const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const nextDay = new Date(dayStart);
+  nextDay.setDate(nextDay.getDate() + 1);
+  const weekStart = new Date(dayStart);
+  weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
+  const nextWeek = new Date(weekStart);
+  nextWeek.setDate(nextWeek.getDate() + 7);
+  const active = state.items.filter((item) => item.status !== "cancelled");
+  const upcoming = active.filter((item) => new Date(item.start_at) >= now);
+  const count = (from, to) => active.filter((item) => { const start = new Date(item.start_at); return start >= from && start < to; }).length;
+  const summary = state.loading || state.error ? "" : `<div class="card form-actions" aria-label="일정 개수"><span>오늘 ${count(dayStart, nextDay)}개</span><span>이번 주 ${count(weekStart, nextWeek)}개</span><span>다가오는 일정 ${upcoming.length}개</span><small>브라우저 시간대 ${escapeHtml(getBrowserTimezone())} · 월요일 시작 · 취소 제외</small></div>`;
   const body = state.loading
     ? loadingMarkup()
     : state.error
@@ -62,7 +89,7 @@ function dashboardView(state) {
       : upcoming.length
         ? `<ul class="schedule-list">${upcoming.slice(0, 5).map(scheduleItem).join("")}</ul>`
         : emptyMarkup();
-  return `<div class="page-heading"><div><h1>내 일정</h1><p>다가오는 일정만 간단히 보여드립니다.</p></div><a class="btn btn-primary" href="#create">${icon("M12 5v14M5 12h14")}일정 만들기</a></div><section class="card"><div class="card-head"><div><h2>다가오는 일정</h2><p>Core API에서 가져온 실제 일정입니다.</p></div><a href="#schedules">전체 보기</a></div>${body}</section>`;
+  return `<div class="page-heading"><div><h1>내 일정</h1><p>다가오는 일정만 간단히 보여드립니다.</p></div><a class="btn btn-primary" href="#create">${icon("M12 5v14M5 12h14")}일정 만들기</a></div>${summary}<section class="card"><div class="card-head"><div><h2>다가오는 일정</h2><p>Core API에서 가져온 실제 일정입니다.</p></div><a href="#schedules">전체 보기</a></div>${body}</section>`;
 }
 function schedulesView(state) {
   const shown = state.period ? state.periodItems : state.showPast ? state.items : state.items.filter((item) => new Date(item.start_at) >= new Date());
@@ -99,7 +126,7 @@ function candidateView(candidate, index) {
   return `<fieldset class="card form-card" data-candidate="${index}" ${candidate.saved ? "disabled" : ""}>
     <legend>후보 ${index + 1}${candidate.saved ? " · 저장됨" : candidate.data.needs_confirmation ? " · 확인 필요" : ""}</legend>
     <label class="field"><input type="checkbox" name="selected" ${candidate.selected ? "checked" : ""}> 이 후보 저장</label>
-    ${candidate.data.issues?.length ? `<p>확인 항목: ${escapeHtml(candidate.data.issues.join(", "))}</p>` : ""}
+    ${Array.isArray(candidate.data.issues) && candidate.data.issues.length ? `<p>확인 항목: ${escapeHtml(candidate.data.issues.join(", "))}</p>` : ""}
     ${candidate.data.needs_confirmation ? `<label class="field"><input type="checkbox" name="confirmed" ${candidate.confirmed ? "checked" : ""}> 불명확한 내용을 확인하고 직접 확정했습니다</label>` : ""}
     ${candidate.error ? `<p class="alert error" role="alert">${escapeHtml(candidate.error)}</p>` : ""}
     <div class="form-grid">
@@ -166,6 +193,23 @@ function init() {
     const error = registerForm.querySelector(`[data-error-for="${name}"]`);
     input.setAttribute("aria-invalid", String(Boolean(message)));
     error.textContent = message;
+  };
+  const fieldError = (scope, name, message) => {
+    const input = scope.querySelector(`[name="${name}"]`);
+    if (!input) return;
+    let error = input.parentElement.querySelector(`[data-field-error="${name}"]`);
+    if (!error) {
+      error = document.createElement("small");
+      error.className = "field-error";
+      error.dataset.fieldError = name;
+      error.id = `field-error-${scope.dataset.candidate ?? "schedule"}-${name}`;
+      error.setAttribute("aria-live", "polite");
+      input.insertAdjacentElement("afterend", error);
+      input.setAttribute("aria-describedby", error.id);
+      input.addEventListener("input", () => fieldError(scope, name, ""));
+    }
+    error.textContent = message;
+    input.setAttribute("aria-invalid", String(Boolean(message)));
   };
   const validateRegistration = () => {
     const fields = Object.fromEntries(new FormData(registerForm));
@@ -274,6 +318,10 @@ function init() {
     });
     if (route === "extract") view.querySelector("[name=api_key]").value = state.extract.key;
     view.querySelector("[data-candidates-form]")?.addEventListener("submit", saveCandidates);
+    state.extract.candidates.forEach((candidate, index) => {
+      const fieldset = view.querySelector(`[data-candidate="${index}"]`);
+      if (fieldset) Object.entries(candidate.fieldErrors || {}).forEach(([name, message]) => fieldError(fieldset, name, message));
+    });
     view.querySelectorAll("[data-delete-id]").forEach((button) =>
       button.addEventListener("click", deleteSchedule),
     );
@@ -309,7 +357,7 @@ function init() {
       const payload = await schedules.extract({ text: draft.text, now: new Date(draft.now).toISOString(), timezone: draft.timezone, apiKey: draft.key, signal: controller.signal });
       if (!Array.isArray(payload?.candidates) || payload.candidates.length > 20) throw new Error("AI 응답의 후보 형식이 올바르지 않습니다.");
       if (generation !== draft.generation || currentRoute() !== "extract") return;
-      draft.candidates = payload.candidates.map((data) => ({ data: data && typeof data === "object" ? data : {}, selected: true, saved: false, error: "", key: null, fingerprint: null }));
+      draft.candidates = payload.candidates.map((data) => ({ data: data && typeof data === "object" && !Array.isArray(data) ? data : {}, selected: true, saved: false, error: candidateError(data), key: null, fingerprint: null }));
       draft.extracted = true;
       draft.truncated = payload.truncated === true;
       draft.keyUnavailable = false;
@@ -348,26 +396,29 @@ function init() {
         notify("확인 필요 항목을 검토하고 직접 확정하세요.", true);
         return;
       }
-      for (const name of ["title", "start_at"]) {
-        if (!fieldset.querySelector(`[name=${name}]`).reportValidity()) return;
-      }
       const value = (name) => fieldset.querySelector(`[name=${name}]`).value;
+      const raw = { title: value("title"), start_at: value("start_at"), end_at: value("end_at"), location: value("location"), description: value("description") };
+      const errors = scheduleErrors(raw);
+      candidate.fieldErrors = errors;
+      Object.entries(errors).forEach(([name, message]) => fieldError(fieldset, name, message));
+      const firstError = Object.entries(errors).find(([, message]) => message);
+      if (firstError) {
+        candidate.error = "후보 입력값을 확인하세요.";
+        fieldset.querySelector(`[name="${firstError[0]}"]`).focus();
+        return;
+      }
       const schedule = {
-        title: value("title").trim(),
-        start_at: new Date(value("start_at")).toISOString(),
-        end_at: value("end_at") ? new Date(value("end_at")).toISOString() : null,
-        location: value("location") || null,
-        description: value("description") || null,
+        title: raw.title.trim(),
+        start_at: new Date(raw.start_at).toISOString(),
+        end_at: raw.end_at ? new Date(raw.end_at).toISOString() : null,
+        location: raw.location || null,
+        description: raw.description || null,
         all_day: fieldset.querySelector("[name=all_day]").checked,
         status: "confirmed",
         source: "ai",
       };
       candidate.data = { ...candidate.data, ...schedule };
       candidate.error = "";
-      if (!schedule.title || (schedule.end_at && schedule.end_at <= schedule.start_at)) {
-        candidate.error = !schedule.title ? "제목을 입력하세요." : "종료는 시작보다 늦어야 합니다.";
-        continue;
-      }
       const fingerprint = JSON.stringify(schedule);
       if (candidate.fingerprint !== fingerprint) {
         candidate.fingerprint = fingerprint;
@@ -392,7 +443,7 @@ function init() {
         candidate.saved = true;
         candidate.selected = false;
       } catch (error) {
-        candidate.error = `저장 실패 (HTTP ${error.status ?? "연결 오류"}). 수정하거나 다시 시도하세요.`;
+        candidate.error = error.status ? `저장 실패 (HTTP ${error.status}). 수정하거나 다시 시도하세요.` : "저장 결과를 확인할 수 없습니다. 목록을 확인한 뒤 같은 작업으로 다시 시도하세요.";
       }
     }
     draft.saving = false;
@@ -560,16 +611,11 @@ function init() {
     if (editing) state.editDraft = values;
     else state.draft = values;
     form.querySelector(".alert")?.remove();
-    const invalid = ["title", "start_at", "end_at", "location", "description", "reminder_minutes"].find((name) => {
-      const value = values[name] || "";
-      return ((name === "title" || name === "start_at") && !value.trim()) || (["title", "location"].includes(name) && [...value].length > 255) || (name === "description" && [...value].length > 10000) || (name === "end_at" && value && value <= values.start_at) || (name === "reminder_minutes" && value && (!Number.isInteger(Number(value)) || Number(value) < 0 || Number(value) > 10080));
-    });
+    const errors = scheduleErrors(values);
+    Object.entries(errors).forEach(([name, message]) => fieldError(form, name, message));
+    const invalid = Object.entries(errors).find(([, message]) => message);
     if (invalid) {
-      const input = form.elements.namedItem(invalid);
-      input.setCustomValidity(invalid === "end_at" ? "종료는 시작보다 늦어야 합니다." : "입력값을 확인하세요.");
-      input.reportValidity();
-      input.focus();
-      input.addEventListener("input", () => input.setCustomValidity(""), { once: true });
+      form.querySelector(`[name="${invalid[0]}"]`).focus();
       return;
     }
     setBusy(form, true, "저장 중…");
@@ -632,7 +678,15 @@ function init() {
       const alert = document.createElement("div");
       alert.className = "alert error";
       alert.setAttribute("role", "alert");
-      alert.textContent = error.code === "expired_key" ? error.message : error.status ? `일정을 저장하지 못했습니다. ${error.status === 401 ? "로그인이 만료되었습니다." : error.status === 409 ? "저장 내용이 충돌했습니다." : "입력값이나 서버 상태를 확인하세요."}` : "저장 결과를 확인할 수 없습니다. 목록을 확인한 뒤 다시 시도하세요.";
+      alert.textContent = error.code === "expired_key" ? error.message : error.status ? `일정을 저장하지 못했습니다. ${error.status === 401 ? "로그인이 만료되었습니다." : error.status === 409 ? "저장 내용이 충돌했습니다." : "입력값이나 서버 상태를 확인하세요."}` : `${error.name === "TimeoutError" ? "요청 시간이 초과됐습니다." : "응답을 받지 못했습니다."} 저장 여부를 확인할 수 없습니다. 목록을 확인하거나 같은 작업 결과를 다시 확인하세요.`;
+      if (!error.status && error.code !== "expired_key") {
+        const retry = document.createElement("button");
+        retry.type = "button";
+        retry.className = "btn btn-secondary";
+        retry.textContent = "같은 작업 결과 확인";
+        retry.addEventListener("click", () => form.requestSubmit());
+        alert.append(" ", retry);
+      }
       form.prepend(alert);
     }
   };
@@ -661,7 +715,7 @@ function init() {
     } catch (error) {
       button.disabled = false;
       button.textContent = "삭제";
-      notify(`일정을 삭제하지 못했습니다. 다시 시도하세요. (${error.message})`, true);
+      notify(error.status ? "일정을 삭제하지 못했습니다. 상태를 확인한 뒤 다시 시도하세요." : "삭제 결과를 확인할 수 없습니다. 목록을 새로고침한 뒤 같은 삭제 작업으로 다시 시도하세요.", true);
     }
   };
   document.querySelector("[data-timezone]").value = getBrowserTimezone();

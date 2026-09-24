@@ -5,7 +5,7 @@ const tokens = { access_token: "test-access", refresh_token: "test-refresh", exp
 
 // No account or schedule is written to a real service by these browser checks.
 async function mockApi(page) {
-  const state = { loginStatus: 200, registerStatus: 201, registerMessage: "Invalid email", refreshStatus: 200, listStatus: 200, saveStatus: 201, failTitle: null, extractStatus: 200, extractErrorCode: "extraction_failed", extractCandidates: [], extractTruncated: false, updateStatus: 200, deleteStatus: 204, deleteGate: null, detailGate: null, schedules: [], calls: [] };
+  const state = { loginStatus: 200, registerStatus: 201, registerMessage: "Invalid email", refreshStatus: 200, listStatus: 200, saveStatus: 201, saveResponseLost: false, createResults: new Map(), failTitle: null, extractStatus: 200, extractErrorCode: "extraction_failed", extractCandidates: [], extractTruncated: false, updateStatus: 200, deleteStatus: 204, deleteGate: null, detailGate: null, schedules: [], calls: [] };
   await page.route("**/*", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -30,8 +30,12 @@ async function mockApi(page) {
       if (method === "GET") return route.fulfill({ status: state.listStatus, json: { schedules: state.schedules } });
       if (method === "POST") {
         if (state.saveStatus !== 201 || body.title === state.failTitle) return route.fulfill({ status: state.saveStatus !== 201 ? state.saveStatus : 503, json: { error: "unavailable" } });
+        const key = request.headers()["idempotency-key"];
+        if (key && state.createResults.has(key)) return route.fulfill({ status: 201, json: state.createResults.get(key) });
         const schedule = { id: "test-schedule", ...body };
         state.schedules.push(schedule);
+        if (key) state.createResults.set(key, schedule);
+        if (state.saveResponseLost) { state.saveResponseLost = false; return route.abort("failed"); }
         return route.fulfill({ status: 201, json: schedule });
       }
     }
@@ -482,4 +486,83 @@ test("changing display timezone leaves stored instants unchanged", async ({ page
   await page.locator("[data-detail-id]").click();
   await expect(page.locator("dialog")).toContainText("표시 시간대: UTC");
   expect(state.schedules[0].start_at).toBe("2030-01-02T09:00:00Z");
+});
+
+test("dashboard counts real owned schedules and excludes cancelled entries", async ({ page }) => {
+  const state = await mockApi(page);
+  const today = new Date();
+  const todayAtNoon = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 12);
+  const tomorrow = new Date(todayAtNoon);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  state.schedules = [
+    { id: "a", title: "오늘 하나", start_at: todayAtNoon.toISOString(), status: "confirmed" },
+    { id: "b", title: "오늘 둘", start_at: todayAtNoon.toISOString(), status: "tentative" },
+    { id: "c", title: "취소 일정", start_at: todayAtNoon.toISOString(), status: "cancelled" },
+    { id: "d", title: "내일 일정", start_at: tomorrow.toISOString(), status: "confirmed" },
+  ];
+  await page.goto("/");
+  await login(page);
+  await expect(page.locator("[aria-label='일정 개수']")).toContainText("오늘 2개");
+  await expect(page.locator("[aria-label='일정 개수']")).toContainText("취소 제외");
+  await expect(page.locator("[data-view]")).not.toContainText("취소 일정");
+});
+
+test("schedule errors appear beside fields and focus the first invalid field", async ({ page }) => {
+  const state = await mockApi(page);
+  await page.goto("/");
+  await login(page);
+  await navigate(page, "create");
+  const form = page.locator("[data-schedule-form]");
+  await form.locator("[name=title]").fill("   ");
+  await form.locator("[name=start_at]").fill("2030-01-02T10:00");
+  await form.locator("[name=end_at]").fill("2030-01-02T09:00");
+  await form.locator("button[type=submit]").click();
+  await expect(form.locator('[data-field-error="title"]')).toContainText("제목을 입력");
+  await expect(form.locator('[data-field-error="end_at"]')).toContainText("종료 시간");
+  await expect(form.locator("[name=title]")).toBeFocused();
+  await form.locator("[name=title]").fill("정상 일정");
+  await form.locator("button[type=submit]").click();
+  await expect(form.locator("[name=end_at]")).toBeFocused();
+  expect(state.calls.filter((call) => call.method === "POST" && call.path.endsWith("/schedules"))).toHaveLength(0);
+});
+
+test("malformed AI candidate is isolated and cannot be saved before correction", async ({ page }) => {
+  const state = await mockApi(page);
+  state.extractCandidates = [
+    { title: "정상", start_at: "2030-01-02T09:00:00Z", all_day: false, issues: [] },
+    { title: 42, start_at: "not-a-date", issues: "invalid" },
+  ];
+  await page.goto("/");
+  await login(page);
+  await navigate(page, "extract");
+  await page.locator("[data-extract-form] [name=text]").fill("정상 일정과 잘못된 일정");
+  await page.locator("[data-extract-form] button[type=submit]").click();
+  await expect(page.locator("[data-candidate]")).toHaveCount(2);
+  await expect(page.locator('[data-candidate="1"]')).toContainText("AI 후보 필드 형식");
+  await page.locator("[data-candidates-form] button[type=submit]").click();
+  await expect(page.locator('[data-candidate="1"] [data-field-error="start_at"]')).toContainText("올바른 시작 시간");
+  expect(state.schedules).toHaveLength(0);
+  await page.locator('[data-candidate="1"] [name=selected]').uncheck();
+  await page.locator("[data-candidates-form] button[type=submit]").click();
+  await expect(page.locator('[data-candidate="0"]')).toContainText("저장됨");
+  expect(state.schedules).toHaveLength(1);
+});
+
+test("lost create response offers confirmation with the same operation key", async ({ page }) => {
+  const state = await mockApi(page);
+  state.saveResponseLost = true;
+  await page.goto("/");
+  await login(page);
+  await navigate(page, "create");
+  const form = page.locator("[data-schedule-form]");
+  await form.locator("[name=title]").fill("응답 유실 일정");
+  await form.locator("[name=start_at]").fill("2030-01-02T09:00");
+  await form.locator("button[type=submit]").click();
+  await expect(form.locator("[role=alert]")).toContainText("저장 여부를 확인할 수 없습니다");
+  await form.getByRole("button", { name: "같은 작업 결과 확인" }).click();
+  await expect(page).toHaveURL(/#schedules$/);
+  const calls = state.calls.filter((call) => call.method === "POST" && call.path.endsWith("/schedules"));
+  expect(calls).toHaveLength(2);
+  expect(calls[0].headers["idempotency-key"]).toBe(calls[1].headers["idempotency-key"]);
+  expect(state.schedules).toHaveLength(1);
 });
