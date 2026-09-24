@@ -240,6 +240,16 @@ svg {
   font-size: 12px;
   font-weight: 600;
 }
+.field-error {
+  color: var(--danger);
+  font-weight: 400;
+}
+.field-error:empty {
+  display: none;
+}
+.field [aria-invalid="true"] {
+  border-color: var(--danger);
+}
 .input,
 .textarea,
 .select {

@@ -61,6 +61,26 @@ test("refresh rotates the stored pair and clears an invalid session", async () =
   assert.equal(client.hasSession(), false);
 });
 
+test("lost refresh response clears the uncertain token instead of sending it again", async () => {
+  let refreshCalls = 0;
+  const client = new AuthClient({
+    storage: storage(),
+    fetchImpl: async (url) => {
+      if (url.endsWith("/refresh")) {
+        refreshCalls++;
+        throw new TypeError("network lost");
+      }
+      return tokenResponse();
+    },
+  });
+  await client.login({ email: "user@example.com", password: "secret" });
+  await assert.rejects(() => client.refresh(), /다시 로그인하세요/);
+  assert.equal(client.hasSession(), false);
+  assert.equal(client.getAccessToken(), null);
+  assert.equal(await client.refresh(), null);
+  assert.equal(refreshCalls, 1);
+});
+
 test("logout revokes the stored refresh token and clears local session state", async () => {
   const calls = [];
   const client = new AuthClient({
@@ -162,6 +182,34 @@ test("concurrent schedule 401s share one refresh and retry once with the same cr
   assert.deepEqual(calls.map(({ options }) => options.headers["Idempotency-Key"]), Array(4).fill("create-key"));
   assert.deepEqual(calls.map(({ options }) => options.body), Array(4).fill('{"title":"Meeting"}'));
   assert.deepEqual(calls.map(({ options }) => options.headers.Authorization), ["Bearer access-1", "Bearer access-1", "Bearer access-2", "Bearer access-2"]);
+});
+
+test("PATCH 401 refreshes once before its single retry", async () => {
+  let refreshCalls = 0;
+  const auth = new AuthClient({
+    storage: storage(),
+    fetchImpl: async (url) => {
+      if (url.endsWith("/refresh")) {
+        refreshCalls++;
+        return tokenResponse("access-2", "refresh-2");
+      }
+      return tokenResponse();
+    },
+  });
+  await auth.login({ email: "user@example.com", password: "secret" });
+  const calls = [];
+  const schedules = new ScheduleClient({
+    authClient: auth,
+    fetchImpl: async (_url, options) => {
+      calls.push(options.headers.Authorization);
+      return new Response(options.headers.Authorization === "Bearer access-1" ? null : JSON.stringify({ id: "schedule-1" }), {
+        status: options.headers.Authorization === "Bearer access-1" ? 401 : 200,
+      });
+    },
+  });
+  await schedules.update("schedule-1", { title: "Meeting" });
+  assert.equal(refreshCalls, 1);
+  assert.deepEqual(calls, ["Bearer access-1", "Bearer access-2"]);
 });
 
 test("a late refresh response cannot restore a logged-out session", async () => {

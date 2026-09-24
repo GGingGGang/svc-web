@@ -153,6 +153,36 @@ function init() {
     target.textContent = message;
     target.className = `alert ${type}`;
   };
+  const registerForm = document.querySelector("[data-register-form]");
+  const registerError = (name, message) => {
+    const input = registerForm.elements.namedItem(name);
+    const error = registerForm.querySelector(`[data-error-for="${name}"]`);
+    input.setAttribute("aria-invalid", String(Boolean(message)));
+    error.textContent = message;
+  };
+  const validateRegistration = () => {
+    const fields = Object.fromEntries(new FormData(registerForm));
+    fields.email = fields.email.trim().toLowerCase();
+    fields.display_name = fields.display_name.trim();
+    fields.timezone = fields.timezone.trim();
+    registerForm.elements.namedItem("email").value = fields.email;
+    const errors = {
+      display_name: !fields.display_name ? "이름을 입력하세요." : Array.from(fields.display_name).length > 100 ? "이름은 100자 이하여야 합니다." : "",
+      email: !fields.email ? "이메일을 입력하세요." : Array.from(fields.email).length > 320 ? "이메일은 320자 이하여야 합니다." : !/^[^\s@.]+(?:\.[^\s@.]+)*@[^\s@.]+(?:\.[^\s@.]+)+$/u.test(fields.email) ? "올바른 이메일 형식을 입력하세요." : "",
+      password: Array.from(fields.password).length < 12 || Array.from(fields.password).length > 128 ? "비밀번호는 12~128자여야 합니다." : "",
+      password_confirmation: fields.password_confirmation !== fields.password ? "비밀번호가 일치하지 않습니다." : "",
+      timezone: !fields.timezone ? "시간대를 입력하세요." : Array.from(fields.timezone).length > 64 ? "시간대는 64자 이하여야 합니다." : "",
+    };
+    if (!errors.timezone) {
+      try { new Intl.DateTimeFormat("en", { timeZone: fields.timezone }); }
+      catch { errors.timezone = "올바른 시간대를 입력하세요."; }
+    }
+    Object.entries(errors).forEach(([name, message]) => registerError(name, message));
+    const firstInvalid = Object.entries(errors).find(([, message]) => message);
+    if (firstInvalid) registerForm.elements.namedItem(firstInvalid[0]).focus();
+    delete fields.password_confirmation;
+    return firstInvalid ? null : fields;
+  };
   const notify = (message, error = false) => {
     clearTimeout(toastTimer);
     toast.textContent = message;
@@ -495,23 +525,47 @@ function init() {
         feedback(error.message, "error");
       }
     });
-  document
-    .querySelector("[data-register-form]")
-    .addEventListener("submit", async (event) => {
+  registerForm.addEventListener("input", (event) => {
+    if (event.target.name) registerError(event.target.name, "");
+  });
+  registerForm.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const form = event.currentTarget;
-      const fields = Object.fromEntries(new FormData(form));
-      setBusy(form, true, "계정 만드는 중…");
+      if (registerForm.querySelector("button[type=submit]").disabled) return;
+      const fields = validateRegistration();
+      if (!fields) return;
+      setBusy(registerForm, true, "계정 만드는 중…");
       try {
         await auth.register(fields);
-        await auth.login({ email: fields.email, password: fields.password });
-        setBusy(form, false);
-        await openApp();
-        notify("계정을 만들고 로그인했습니다.");
       } catch (error) {
-        setBusy(form, false);
-        feedback(error.message, "error");
+        setBusy(registerForm, false);
+        const invalidField = error.status === 400 && ({
+          "Invalid email": "email",
+          "Password must be 12 to 128 characters": "password",
+          "Display name must be 1 to 100 characters": "display_name",
+          "Invalid timezone": "timezone",
+        }[error.serverMessage] || /body\/(email|password|display_name|timezone)\b/.exec(error.serverMessage)?.[1]);
+        if (invalidField) {
+          registerError(invalidField, "입력값을 확인하세요.");
+          registerForm.elements.namedItem(invalidField).focus();
+          return;
+        }
+        feedback(error.status === 409 || !error.status
+          ? "가입 여부를 확인할 수 없습니다. 이미 가입했다면 로그인 화면에서 다시 시도하세요."
+          : error.message, "error");
+        return;
       }
+      try {
+        await auth.login({ email: fields.email, password: fields.password });
+      } catch {
+        setBusy(registerForm, false);
+        setMode("login");
+        document.querySelector("[data-login-form] [name=email]").value = fields.email;
+        feedback("계정은 생성됐습니다. 로그인에 실패했으니 로그인 화면에서 다시 시도하세요.", "error");
+        return;
+      }
+      setBusy(registerForm, false);
+      await openApp();
+      notify("계정을 만들고 로그인했습니다.");
     });
   document
     .querySelector("[data-logout]")
@@ -544,6 +598,7 @@ function init() {
         form.reset();
         setBusy(form, false);
       });
+      registerForm.querySelectorAll("[data-error-for]").forEach((error) => registerError(error.dataset.errorFor, ""));
       document.querySelector("[data-timezone]").value = getBrowserTimezone();
       setMode("login");
     });

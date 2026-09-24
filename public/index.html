@@ -79,7 +79,7 @@
                 required /></label
             ><button type="submit" class="btn btn-primary">로그인</button>
           </form>
-          <form class="auth-form" data-register-form hidden>
+          <form class="auth-form" data-register-form novalidate hidden>
             <label class="field"
               ><span>이름</span
               ><input
@@ -87,8 +87,8 @@
                 type="text"
                 name="display_name"
                 autocomplete="name"
-                maxlength="100"
-                required /></label
+                aria-describedby="register-name-error"
+                required /><small id="register-name-error" class="field-error" data-error-for="display_name" aria-live="polite"></small></label
             ><label class="field"
               ><span>이메일</span
               ><input
@@ -96,7 +96,8 @@
                 type="email"
                 name="email"
                 autocomplete="email"
-                required /></label
+                aria-describedby="register-email-error"
+                required /><small id="register-email-error" class="field-error" data-error-for="email" aria-live="polite"></small></label
             ><label class="field"
               ><span>비밀번호</span
               ><input
@@ -104,8 +105,17 @@
                 type="password"
                 name="password"
                 autocomplete="new-password"
-                minlength="1"
-                required /></label
+                aria-describedby="register-password-error"
+                required /><small id="register-password-error" class="field-error" data-error-for="password" aria-live="polite"></small></label
+            ><label class="field"
+              ><span>비밀번호 확인</span
+              ><input
+                class="input"
+                type="password"
+                name="password_confirmation"
+                autocomplete="new-password"
+                aria-describedby="register-confirmation-error"
+                required /><small id="register-confirmation-error" class="field-error" data-error-for="password_confirmation" aria-live="polite"></small></label
             ><label class="field"
               ><span>시간대</span
               ><input
@@ -113,8 +123,8 @@
                 type="text"
                 name="timezone"
                 data-timezone
-                maxlength="64"
-                required /></label
+                aria-describedby="register-timezone-error"
+                required /><small id="register-timezone-error" class="field-error" data-error-for="timezone" aria-live="polite"></small></label
             ><button type="submit" class="btn btn-primary">계정 만들기</button>
           </form>
         </div>

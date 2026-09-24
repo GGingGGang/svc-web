@@ -26,7 +26,7 @@ export function errorMessage(status, payload) {
     account_locked: "이 계정은 잠겨 있습니다.",
     email_already_registered: "이미 등록된 이메일입니다.",
     invalid_credentials: "이메일 또는 비밀번호를 확인하세요.",
-    invalid_refresh_token: "로그인 정보가 만료되었습니다.",
+    invalid_refresh_token: "로그인 정보가 만료되었습니다. 다시 로그인하세요.",
     rate_limited: "로그인 시도가 너무 많습니다. 잠시 후 다시 시도하세요.",
     refresh_reuse_detected: "로그인 정보가 만료되었습니다. 다시 로그인하세요.",
   };
@@ -98,6 +98,7 @@ export class AuthClient {
     if (!response.ok) {
       const error = new Error(errorMessage(response.status, payload));
       error.status = response.status;
+      if (path === "/register" && response.status === 400) error.serverMessage = payload?.message;
       throw error;
     }
     return payload;
@@ -126,8 +127,9 @@ export class AuthClient {
         return pair;
       })
       .catch((error) => {
-        if (error.status === 401 && this.sessionVersion === sessionVersion && this.storage?.getItem(refreshTokenKey) === refreshToken) this.clear();
-        throw error;
+        if (this.sessionVersion !== sessionVersion || this.storage?.getItem(refreshTokenKey) !== refreshToken) throw error;
+        this.clear();
+        throw error.status === 401 ? error : new Error("로그인 갱신 결과를 확인할 수 없습니다. 다시 로그인하세요.");
       });
     const tracked = pending.finally(() => {
       if (this.refreshPromise === tracked) this.refreshPromise = null;

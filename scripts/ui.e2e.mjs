@@ -5,7 +5,7 @@ const tokens = { access_token: "test-access", refresh_token: "test-refresh", exp
 
 // No account or schedule is written to a real service by these browser checks.
 async function mockApi(page) {
-  const state = { loginStatus: 200, refreshStatus: 200, listStatus: 200, saveStatus: 201, failTitle: null, extractStatus: 200, extractErrorCode: "extraction_failed", extractCandidates: [], extractTruncated: false, updateStatus: 200, deleteStatus: 204, deleteGate: null, schedules: [], calls: [] };
+  const state = { loginStatus: 200, registerStatus: 201, registerMessage: "Invalid email", refreshStatus: 200, listStatus: 200, saveStatus: 201, failTitle: null, extractStatus: 200, extractErrorCode: "extraction_failed", extractCandidates: [], extractTruncated: false, updateStatus: 200, deleteStatus: 204, deleteGate: null, schedules: [], calls: [] };
   await page.route("**/*", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -23,7 +23,7 @@ async function mockApi(page) {
     state.calls.push({ path: url.pathname, method, body, headers: request.headers(), query: url.search });
     if (url.pathname.endsWith("/login")) return route.fulfill({ status: state.loginStatus, json: state.loginStatus === 200 ? tokens : { error: "invalid_credentials" } });
     if (url.pathname.endsWith("/refresh")) return route.fulfill({ status: state.refreshStatus, json: state.refreshStatus === 200 ? tokens : { error: "invalid_refresh_token" } });
-    if (url.pathname.endsWith("/register")) return route.fulfill({ status: 201, json: { id: "test-user" } });
+    if (url.pathname.endsWith("/register")) return route.fulfill({ status: state.registerStatus, json: state.registerStatus === 201 ? { id: "test-user" } : state.registerStatus === 400 ? { statusCode: 400, error: "Bad Request", message: state.registerMessage } : { error: "email_already_registered" } });
     if (url.pathname.endsWith("/logout")) return route.fulfill({ status: 204 });
     if (url.pathname === "/v1/core/schedules/extract") return route.fulfill({ status: state.extractStatus, json: state.extractStatus === 200 ? { candidates: state.extractCandidates, truncated: state.extractTruncated } : { error: state.extractErrorCode } });
     if (url.pathname === "/v1/core/schedules") {
@@ -114,9 +114,11 @@ test("registration and reload restore a session, expired refresh returns to logi
   await form.locator("[name=display_name]").fill("Browser Test");
   await form.locator("[name=email]").fill("browser@example.test");
   await form.locator("[name=password]").fill("Test-password-123!");
+  await form.locator("[name=password_confirmation]").fill("Test-password-123!");
   await form.locator("button[type=submit]").click();
   await expect(page.locator("[data-authenticated]")).toBeVisible();
   expect(state.calls.find((call) => call.path.endsWith("/register")).body).toMatchObject({ display_name: "Browser Test", email: "browser@example.test" });
+  expect(state.calls.find((call) => call.path.endsWith("/register")).body).not.toHaveProperty("password_confirmation");
   await page.reload();
   await expect(page.locator("[data-authenticated]")).toBeVisible();
   expect(state.calls.some((call) => call.path.endsWith("/refresh"))).toBe(true);
@@ -126,6 +128,47 @@ test("registration and reload restore a session, expired refresh returns to logi
   await expect(page.locator("[data-authenticated]")).toBeHidden();
   await expect(page.locator("[data-auth-message]")).toContainText("만료");
   expect(await page.evaluate(() => sessionStorage.getItem("svc-web.refresh-token"))).toBeNull();
+});
+
+test("registration validates fields before request and keeps successful account after login failure", async ({ page }) => {
+  const state = await mockApi(page);
+  await page.goto("/");
+  await page.locator('[data-auth-mode="register"]').click();
+  const form = page.locator("[data-register-form]");
+  await form.locator("[name=display_name]").fill("   ");
+  await form.locator("[name=email]").fill("invalid");
+  await form.locator("[name=password]").fill("short");
+  await form.locator("[name=password_confirmation]").fill("different");
+  await form.locator("button[type=submit]").click();
+  for (const name of ["display_name", "email", "password", "password_confirmation"])
+    await expect(form.locator(`[data-error-for="${name}"]`)).not.toBeEmpty();
+  expect(state.calls.filter((call) => call.path.endsWith("/register"))).toHaveLength(0);
+
+  await form.locator("[name=display_name]").fill("  Browser Test  ");
+  await form.locator("[name=email]").fill("browser@example..test");
+  await form.locator("[name=password]").fill("Test-password-123!");
+  await form.locator("[name=password_confirmation]").fill("Test-password-123!");
+  await form.locator("button[type=submit]").click();
+  await expect(form.locator('[data-error-for="email"]')).toContainText("올바른 이메일 형식");
+  expect(state.calls.filter((call) => call.path.endsWith("/register"))).toHaveLength(0);
+
+  await form.locator("[name=email]").fill("  Browser@Example.Test  ");
+  state.registerStatus = 400;
+  await form.locator("button[type=submit]").click();
+  await expect(form.locator('[data-error-for="email"]')).toContainText("입력값을 확인하세요");
+  state.registerStatus = 409;
+  await form.locator("button[type=submit]").click();
+  await expect(page.locator("[data-auth-message]")).toContainText("로그인 화면에서 다시 시도하세요");
+  state.registerStatus = 201;
+  state.loginStatus = 401;
+  await form.locator("button[type=submit]").click();
+  await expect(page.locator("[data-login-form]")).toBeVisible();
+  await expect(page.locator("[data-auth-message]")).toContainText("계정은 생성됐습니다");
+  await expect(page.locator("[data-login-form] [name=email]")).toHaveValue("browser@example.test");
+  expect(state.calls.filter((call) => call.path.endsWith("/register"))).toHaveLength(3);
+  expect(state.calls.findLast((call) => call.path.endsWith("/register")).body).toEqual({
+    display_name: "Browser Test", email: "browser@example.test", password: "Test-password-123!", timezone: expect.any(String)
+  });
 });
 
 test("list retry and failed save preserve input, successful save renders escaped data", async ({ page }, testInfo) => {
