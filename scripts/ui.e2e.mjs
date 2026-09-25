@@ -5,7 +5,7 @@ const tokens = { access_token: "test-access", refresh_token: "test-refresh", exp
 
 // No account or schedule is written to a real service by these browser checks.
 async function mockApi(page) {
-  const state = { loginStatus: 200, registerStatus: 201, registerMessage: "Invalid email", refreshStatus: 200, listStatus: 200, saveStatus: 201, saveResponseLost: false, createResults: new Map(), failTitle: null, extractStatus: 200, extractErrorCode: "extraction_failed", extractCandidates: [], extractTruncated: false, updateStatus: 200, deleteStatus: 204, deleteGate: null, detailGate: null, schedules: [], calls: [] };
+  const state = { loginStatus: 200, registerStatus: 201, registerMessage: "Invalid email", refreshStatus: 200, listStatus: 200, saveStatus: 201, saveResponseLost: false, createResults: new Map(), failTitle: null, extractStatus: 200, extractErrorCode: "extraction_failed", extractCandidates: [], extractTruncated: false, updateStatus: 200, deleteStatus: 204, deleteGate: null, detailGate: null, detailStatus: 200, reminderStatus: 201, schedules: [], calls: [] };
   await page.route("**/*", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -26,6 +26,7 @@ async function mockApi(page) {
     if (url.pathname.endsWith("/register")) return route.fulfill({ status: state.registerStatus, json: state.registerStatus === 201 ? { id: "test-user" } : state.registerStatus === 400 ? { statusCode: 400, error: "Bad Request", message: state.registerMessage } : { error: "email_already_registered" } });
     if (url.pathname.endsWith("/logout")) return route.fulfill({ status: 204 });
     if (url.pathname === "/v1/core/schedules/extract") return route.fulfill({ status: state.extractStatus, json: state.extractStatus === 200 ? { candidates: state.extractCandidates, truncated: state.extractTruncated } : { error: state.extractErrorCode } });
+    if (url.pathname.includes("/reminders") && method === "POST") return route.fulfill({ status: state.reminderStatus, json: state.reminderStatus === 201 ? { id: "test-reminder" } : { error: "inaccessible" } });
     if (url.pathname === "/v1/core/schedules") {
       if (method === "GET") return state.listStatus === 0 ? route.abort("failed") : route.fulfill({ status: state.listStatus, json: { schedules: state.schedules } });
       if (method === "POST") {
@@ -41,6 +42,7 @@ async function mockApi(page) {
     }
     if (method === "GET" && url.pathname.startsWith("/v1/core/schedules/")) {
       if (state.detailGate) await state.detailGate;
+      if (state.detailStatus !== 200) return route.fulfill({ status: state.detailStatus, json: { error: "inaccessible" } });
       const schedule = state.schedules.find((item) => item.id === url.pathname.split("/").at(-1));
       return route.fulfill({ status: schedule ? 200 : 404, json: schedule ? { ...schedule, reminders: [] } : { error: "not_found" } });
     }
@@ -520,6 +522,34 @@ test("logout discards a late detail response", async ({ page }) => {
   await expect(page.locator("[data-authenticated]")).toBeHidden();
   await expect(page.locator("dialog")).toHaveCount(0);
   await expect(page.locator("[data-view]")).toBeEmpty();
+});
+
+test("inaccessible detail removes private list content", async ({ page }) => {
+  const state = await mockApi(page);
+  state.schedules = [{ id: "inaccessible", title: "비공개 상세", start_at: "2099-01-01T09:00:00Z", status: "confirmed" }];
+  await page.goto("/");
+  await login(page);
+  await navigate(page, "schedules");
+  state.detailStatus = 403;
+  await page.locator("[data-detail-id]").click();
+  await expect(page.locator("[data-view]")).not.toContainText("비공개 상세");
+  await expect(page.locator("[data-toast]")).toContainText("접근 권한이 사라졌습니다");
+  await expect(page.locator("dialog")).toHaveCount(0);
+});
+
+test("deleted detail closes when a reminder action returns 404", async ({ page }) => {
+  const state = await mockApi(page);
+  state.reminderStatus = 404;
+  state.schedules = [{ id: "removed", title: "삭제된 비공개 일정", start_at: "2099-01-01T09:00:00Z", status: "confirmed" }];
+  await page.goto("/");
+  await login(page);
+  await navigate(page, "schedules");
+  await page.locator("[data-detail-id]").click();
+  await expect(page.locator("dialog")).toContainText("삭제된 비공개 일정");
+  await page.locator("[data-add-reminder] button[type=submit]").click();
+  await expect(page.locator("dialog")).toHaveCount(0);
+  await expect(page.locator("[data-view]")).not.toContainText("삭제된 비공개 일정");
+  await expect(page.locator("[data-toast]")).toContainText("목록에서 제거했습니다");
 });
 
 test("logout discards a late delete response", async ({ page }) => {

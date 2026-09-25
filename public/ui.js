@@ -482,6 +482,14 @@ function init() {
     state.error = "";
     view.replaceChildren();
   };
+  const removeInaccessibleDetail = (id) => {
+    detailDialog?.close();
+    state.items = state.items.filter((item) => item.id !== id);
+    state.periodItems = state.periodItems.filter((item) => item.id !== id);
+    location.hash = "#schedules";
+    render();
+    notify("일정이 삭제되었거나 접근 권한이 사라졌습니다. 목록에서 제거했습니다.", true);
+  };
   const showDetail = async (event) => {
     const id = event.currentTarget.dataset.detailId;
     const trigger = event.currentTarget;
@@ -493,9 +501,9 @@ function init() {
       item = await schedules.get(id);
     } catch (error) {
       if (auth.sessionVersion !== sessionVersion || application.hidden) return;
-      notify(error.status === 404 ? "일정이 삭제되었거나 접근할 수 없습니다. 목록을 새로고침합니다." : scheduleFailure(error, "상세를 불러오지 못했습니다."), true);
-      if (error.status === 404) await loadSchedules();
-      else { trigger.disabled = false; trigger.textContent = "상세"; }
+      if (error.status === 403 || error.status === 404) removeInaccessibleDetail(id);
+      else notify(scheduleFailure(error, "상세를 불러오지 못했습니다."), true);
+      if (error.status !== 403 && error.status !== 404) { trigger.disabled = false; trigger.textContent = "상세"; }
       return;
     }
     if (auth.sessionVersion !== sessionVersion || application.hidden) return;
@@ -519,8 +527,9 @@ function init() {
           item = await schedules.get(id);
           if (auth.sessionVersion !== sessionVersion || !dialog.isConnected) return;
           draw();
-        } catch {
+        } catch (error) {
           if (auth.sessionVersion !== sessionVersion || !dialog.isConnected) return;
+          if (error.status === 403 || error.status === 404) return removeInaccessibleDetail(id);
           button.disabled = false;
           notify("리마인더 결과를 확인할 수 없습니다. 상세를 다시 열어 확인하세요.", true);
         }
@@ -533,8 +542,9 @@ function init() {
           item = await schedules.get(id);
           if (auth.sessionVersion !== sessionVersion || !dialog.isConnected) return;
           draw();
-        } catch {
+        } catch (error) {
           if (auth.sessionVersion !== sessionVersion || !dialog.isConnected) return;
+          if (error.status === 403 || error.status === 404) return removeInaccessibleDetail(id);
           button.disabled = false;
           notify("리마인더 제거 결과를 확인할 수 없습니다. 상세를 다시 열어 확인하세요.", true);
         }
