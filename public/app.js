@@ -39,6 +39,10 @@ async function safeJson(response) {
   return response.json().catch(() => ({}));
 }
 
+function responseRequestId(response) {
+  return ["X-Error-ID", "X-Request-ID"].map((name) => response.headers.get(name)).find((id) => /^(?:[0-9a-f]{32}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/i.test(id || "")) || null;
+}
+
 export class AuthClient {
   constructor({
     config,
@@ -102,8 +106,10 @@ export class AuthClient {
     }
     const payload = await safeJson(response);
     if (!response.ok) {
-      const error = new Error(errorMessage(response.status, payload));
+      const requestId = responseRequestId(response);
+      const error = new Error(`${errorMessage(response.status, payload)}${requestId ? ` 오류 ID: ${requestId}` : ""}`);
       error.status = response.status;
+      error.requestId = requestId;
       if (path === "/register" && response.status === 400) error.serverMessage = payload?.message;
       throw error;
     }
@@ -194,6 +200,7 @@ export class ScheduleClient {
       );
       error.status = response.status;
       error.code = (await safeJson(response)).error;
+      error.requestId = responseRequestId(response);
       throw error;
     }
     return response.status === 204 ? null : response.json();

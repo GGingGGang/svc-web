@@ -66,9 +66,12 @@ function loadingMarkup() {
 function errorMarkup(message) {
   return `<div class="api-error"><p>${escapeHtml(message)}</p><button class="btn btn-secondary" type="button" data-reload>다시 시도</button></div>`;
 }
+function withRequestId(error, message) {
+  return `${message}${error.requestId && !message.includes("오류 ID:") ? ` 오류 ID: ${error.requestId}` : ""}`;
+}
 function scheduleFailure(error, action) {
   const reason = error.status === 401 ? "로그인이 만료되었습니다. 다시 로그인하세요." : error.status === 403 ? "이 일정에 접근할 권한이 없습니다. 목록을 새로고침하세요." : error.status === 429 ? "요청이 너무 많습니다. 잠시 후 다시 시도하세요." : error.status >= 500 ? "서버에 문제가 생겼습니다. 잠시 후 다시 시도하세요." : error.status ? "입력값이나 요청 상태를 확인하세요." : "통신이 끊겼습니다. 연결을 확인하고 다시 시도하세요.";
-  return `${action} ${reason}`;
+  return withRequestId(error, `${action} ${reason}`);
 }
 function scheduleItem(schedule) {
   return `<li class="schedule-item"><span class="schedule-date">${scheduleDate(schedule)}</span><div><strong>${escapeHtml(schedule.title)}</strong><p>${escapeHtml(schedule.location || "장소 없음")}</p></div><span class="schedule-time">${scheduleTime(schedule)}</span></li>`;
@@ -390,6 +393,7 @@ function init() {
           : error.status === 502
             ? "AI 서비스 또는 키를 사용할 수 없습니다. 키를 확인하거나 직접 일정을 만드세요."
             : scheduleFailure(error, "AI 후보를 추출하지 못했습니다.");
+      draft.error = withRequestId(error, draft.error);
       draft.keyUnavailable = error.code === "ai_key_unavailable";
     } finally {
       clearTimeout(timeout);
@@ -547,7 +551,7 @@ function init() {
           if (error.status === 403 || error.status === 404) return removeInaccessibleDetail(id);
           button.disabled = false;
           button.textContent = "리마인더 추가";
-          notify("리마인더 결과를 확인할 수 없습니다. 상세를 다시 열어 확인하세요.", true);
+          notify(withRequestId(error, "리마인더 결과를 확인할 수 없습니다. 상세를 다시 열어 확인하세요."), true);
         }
       });
       dialog.querySelectorAll("[data-remove-reminder]").forEach((button) => button.addEventListener("click", async () => {
@@ -564,7 +568,7 @@ function init() {
           if (error.status === 403 || error.status === 404) return removeInaccessibleDetail(id);
           button.disabled = false;
           button.textContent = "제거";
-          notify("리마인더 제거 결과를 확인할 수 없습니다. 상세를 다시 열어 확인하세요.", true);
+          notify(withRequestId(error, "리마인더 제거 결과를 확인할 수 없습니다. 상세를 다시 열어 확인하세요."), true);
         }
       }));
     };
@@ -743,7 +747,7 @@ function init() {
       const alert = document.createElement("div");
       alert.className = "alert error";
       alert.setAttribute("role", "alert");
-      alert.textContent = error.code === "expired_key" ? error.message : error.status === 409 ? "일정을 저장하지 못했습니다. 저장 내용이 충돌했습니다. 최신 목록을 확인하세요." : error.status ? scheduleFailure(error, "일정을 저장하지 못했습니다.") : `${error.name === "TimeoutError" ? "요청 시간이 초과됐습니다." : "응답을 받지 못했습니다."} 저장 여부를 확인할 수 없습니다. 목록을 확인하거나 같은 작업 결과를 다시 확인하세요.`;
+      alert.textContent = withRequestId(error, error.code === "expired_key" ? error.message : error.status === 409 ? "일정을 저장하지 못했습니다. 저장 내용이 충돌했습니다. 최신 목록을 확인하세요." : error.status ? scheduleFailure(error, "일정을 저장하지 못했습니다.") : `${error.name === "TimeoutError" ? "요청 시간이 초과됐습니다." : "응답을 받지 못했습니다."} 저장 여부를 확인할 수 없습니다. 목록을 확인하거나 같은 작업 결과를 다시 확인하세요.`);
       if (!error.status && error.code !== "expired_key") {
         const retry = document.createElement("button");
         retry.type = "button";
@@ -851,22 +855,22 @@ function init() {
           "Invalid timezone": "timezone",
         }[error.serverMessage] || /body\/(email|password|display_name|timezone)\b/.exec(error.serverMessage)?.[1]);
         if (invalidField) {
-          registerError(invalidField, "입력값을 확인하세요.");
+          registerError(invalidField, withRequestId(error, "입력값을 확인하세요."));
           registerForm.elements.namedItem(invalidField).focus();
           return;
         }
-        feedback(error.status === 409 || !error.status
+        feedback(withRequestId(error, error.status === 409 || !error.status
           ? "가입 여부를 확인할 수 없습니다. 이미 가입했다면 로그인 화면에서 다시 시도하세요."
-          : error.message, "error");
+          : error.message), "error");
         return;
       }
       try {
         await auth.login({ email: fields.email, password: fields.password });
-      } catch {
+      } catch (error) {
         setBusy(registerForm, false);
         setMode("login");
         document.querySelector("[data-login-form] [name=email]").value = fields.email;
-        feedback("계정은 생성됐습니다. 로그인에 실패했으니 로그인 화면에서 다시 시도하세요.", "error");
+        feedback(withRequestId(error, "계정은 생성됐습니다. 로그인에 실패했으니 로그인 화면에서 다시 시도하세요."), "error");
         return;
       }
       setBusy(registerForm, false);

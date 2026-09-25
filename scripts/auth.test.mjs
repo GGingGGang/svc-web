@@ -112,6 +112,15 @@ test("auth requests have a deadline and hide transport details", async () => {
   });
 });
 
+test("failed auth and schedule responses expose only valid correlation IDs", async () => {
+  const auth = new AuthClient({ storage: storage(), fetchImpl: async () => new Response(JSON.stringify({ error: "invalid_credentials" }), { status: 401, headers: { "X-Error-ID": "0123456789abcdef0123456789abcdef" } }) });
+  await assert.rejects(() => auth.login({ email: "user@example.com", password: "secret" }), /오류 ID: 0123456789abcdef0123456789abcdef/);
+  const schedules = new ScheduleClient({ authClient: { getAccessToken: () => "access" }, fetchImpl: async () => new Response(JSON.stringify({ error: "internal" }), { status: 503, headers: { "X-Request-ID": "123e4567-e89b-12d3-a456-426614174000" } }) });
+  await assert.rejects(() => schedules.list(), (error) => { assert.equal(error.requestId, "123e4567-e89b-12d3-a456-426614174000"); return true; });
+  schedules.fetchImpl = async () => new Response("{}", { status: 503, headers: { "X-Request-ID": "contains-private-data" } });
+  await assert.rejects(() => schedules.list(), (error) => { assert.equal(error.requestId, null); return true; });
+});
+
 test("schedule client follows the core schedule contract with bearer auth", async () => {
   const session = storage();
   const auth = new AuthClient({ storage: session, fetchImpl: async () => tokenResponse() });
