@@ -336,15 +336,29 @@ function init() {
   let extractController;
   const extractSchedules = async (event) => {
     event.preventDefault();
+    const form = event.currentTarget;
     const draft = state.extract;
-    const values = Object.fromEntries(new FormData(event.currentTarget));
+    const values = Object.fromEntries(new FormData(form));
     draft.text = values.text;
     draft.now = values.now;
     draft.timezone = values.timezone.trim();
     draft.error = "";
+    form.querySelector(".alert")?.remove();
+    for (const name of ["text", "now", "timezone"]) fieldError(form, name, "");
     if (!draft.text.trim() || [...draft.text].length > 10000 || new TextEncoder().encode(draft.text).length > 65536) {
-      draft.error = "원문은 공백만 입력할 수 없고 10,000자·64KiB 이하여야 합니다.";
-      render();
+      fieldError(form, "text", "원문은 공백만 입력할 수 없고 10,000자·64KiB 이하여야 합니다.");
+      form.elements.text.focus();
+      return;
+    }
+    if (!Number.isFinite(Date.parse(draft.now))) {
+      fieldError(form, "now", "올바른 기준 일시를 입력하세요.");
+      form.elements.now.focus();
+      return;
+    }
+    try { new Intl.DateTimeFormat("en", { timeZone: draft.timezone }); }
+    catch {
+      fieldError(form, "timezone", "올바른 IANA 시간대를 입력하세요.");
+      form.elements.timezone.focus();
       return;
     }
     extractController?.abort();

@@ -450,6 +450,27 @@ test("AI rate limiting keeps the text and manual creation available", async ({ p
   expect(state.schedules).toHaveLength(0);
 });
 
+test("AI input errors stay beside the field and focus the first invalid value", async ({ page }) => {
+  const state = await mockApi(page);
+  await page.goto("/");
+  await login(page);
+  await navigate(page, "extract");
+  const form = page.locator("[data-extract-form]");
+  await form.locator("[name=text]").fill("   ");
+  await form.locator("button[type=submit]").click();
+  await expect(form.locator('[data-field-error="text"]')).toContainText("공백만 입력할 수 없고");
+  await expect(form.locator("[name=text]")).toBeFocused();
+  await form.locator("[name=text]").fill("가".repeat(10001));
+  await form.locator("button[type=submit]").click();
+  await expect(form.locator('[data-field-error="text"]')).toContainText("10,000자");
+  await form.locator("[name=text]").fill("내일 회의");
+  await form.locator("[name=timezone]").fill("invalid/zone");
+  await form.locator("button[type=submit]").click();
+  await expect(form.locator('[data-field-error="timezone"]')).toContainText("IANA 시간대");
+  await expect(form.locator("[name=timezone]")).toBeFocused();
+  expect(state.calls.filter((call) => call.path.endsWith("/extract"))).toHaveLength(0);
+});
+
 test("AI reference instant and timezone can be reviewed and changed", async ({ page }) => {
   const state = await mockApi(page);
   await page.goto("/");
