@@ -288,6 +288,41 @@ test("schedule deletion confirms the title and waits for the server", async ({ p
   await expect(page.locator("[data-view]")).not.toContainText("프로젝트 회고");
 });
 
+test("core schedule actions work by keyboard and detail returns focus", async ({ page }) => {
+  const state = await mockApi(page);
+  await page.goto("/");
+  const loginForm = page.locator("[data-login-form]");
+  await loginForm.getByLabel("이메일").fill("browser@example.test");
+  await loginForm.getByLabel("비밀번호").fill("Test-password-123!");
+  await loginForm.locator("button[type=submit]").focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("[data-authenticated]")).toBeVisible();
+  await navigate(page, "create");
+  const form = page.locator("[data-schedule-form]");
+  await form.getByLabel("제목").fill("키보드 일정");
+  await form.getByLabel("시작 시간").fill("2099-06-15T14:30");
+  await form.locator("button[type=submit]").focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("[data-view]")).toContainText("키보드 일정");
+  const detail = page.locator("[data-detail-id]");
+  await detail.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("dialog")).toBeVisible();
+  expect(await page.evaluate(() => document.querySelector("dialog").contains(document.activeElement))).toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(detail).toBeFocused();
+  await page.locator("[data-edit-id]").focus();
+  await page.keyboard.press("Enter");
+  await form.getByLabel("제목").fill("수정한 키보드 일정");
+  await form.locator("button[type=submit]").focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("[data-view]")).toContainText("수정한 키보드 일정");
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.locator("[data-delete-id]").focus();
+  await page.keyboard.press("Enter");
+  await expect.poll(() => state.schedules.length).toBe(0);
+});
+
 test("schedule edit preserves fields on failure and updates only after success", async ({ page }) => {
   const state = await mockApi(page);
   state.schedules = [{ id: "future", title: "프로젝트 회고", start_at: "2099-06-15T05:30:00Z", location: "회의실", description: "기존 메모", status: "confirmed", all_day: false }];
