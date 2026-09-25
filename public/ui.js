@@ -520,6 +520,7 @@ function init() {
         submit.preventDefault();
         const button = submit.currentTarget.querySelector("button[type=submit]");
         button.disabled = true;
+        button.textContent = "추가 중…";
         try {
           const minutes_before = Number(submit.currentTarget.elements.minutes_before.value);
           await schedules.addReminder(id, { minutes_before, channel: submit.currentTarget.elements.channel.value });
@@ -531,11 +532,13 @@ function init() {
           if (auth.sessionVersion !== sessionVersion || !dialog.isConnected) return;
           if (error.status === 403 || error.status === 404) return removeInaccessibleDetail(id);
           button.disabled = false;
+          button.textContent = "리마인더 추가";
           notify("리마인더 결과를 확인할 수 없습니다. 상세를 다시 열어 확인하세요.", true);
         }
       });
       dialog.querySelectorAll("[data-remove-reminder]").forEach((button) => button.addEventListener("click", async () => {
         button.disabled = true;
+        button.textContent = "제거 중…";
         try {
           await schedules.deleteReminder(id, button.dataset.removeReminder);
           if (auth.sessionVersion !== sessionVersion || !dialog.isConnected) return;
@@ -546,6 +549,7 @@ function init() {
           if (auth.sessionVersion !== sessionVersion || !dialog.isConnected) return;
           if (error.status === 403 || error.status === 404) return removeInaccessibleDetail(id);
           button.disabled = false;
+          button.textContent = "제거";
           notify("리마인더 제거 결과를 확인할 수 없습니다. 상세를 다시 열어 확인하세요.", true);
         }
       }));

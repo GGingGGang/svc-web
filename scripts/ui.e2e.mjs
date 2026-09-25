@@ -5,7 +5,7 @@ const tokens = { access_token: "test-access", refresh_token: "test-refresh", exp
 
 // No account or schedule is written to a real service by these browser checks.
 async function mockApi(page) {
-  const state = { loginStatus: 200, registerStatus: 201, registerMessage: "Invalid email", refreshStatus: 200, listStatus: 200, saveStatus: 201, saveResponseLost: false, createResults: new Map(), failTitle: null, extractStatus: 200, extractErrorCode: "extraction_failed", extractCandidates: [], extractTruncated: false, updateStatus: 200, deleteStatus: 204, deleteGate: null, detailGate: null, detailStatus: 200, reminderStatus: 201, schedules: [], calls: [] };
+  const state = { loginStatus: 200, registerStatus: 201, registerMessage: "Invalid email", refreshStatus: 200, listStatus: 200, saveStatus: 201, saveResponseLost: false, createResults: new Map(), failTitle: null, extractStatus: 200, extractErrorCode: "extraction_failed", extractCandidates: [], extractTruncated: false, updateStatus: 200, deleteStatus: 204, deleteGate: null, detailGate: null, detailStatus: 200, reminderStatus: 201, reminderGate: null, reminders: [], schedules: [], calls: [] };
   await page.route("**/*", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -26,7 +26,11 @@ async function mockApi(page) {
     if (url.pathname.endsWith("/register")) return route.fulfill({ status: state.registerStatus, json: state.registerStatus === 201 ? { id: "test-user" } : state.registerStatus === 400 ? { statusCode: 400, error: "Bad Request", message: state.registerMessage } : { error: "email_already_registered" } });
     if (url.pathname.endsWith("/logout")) return route.fulfill({ status: 204 });
     if (url.pathname === "/v1/core/schedules/extract") return route.fulfill({ status: state.extractStatus, json: state.extractStatus === 200 ? { candidates: state.extractCandidates, truncated: state.extractTruncated } : { error: state.extractErrorCode } });
-    if (url.pathname.includes("/reminders") && method === "POST") return route.fulfill({ status: state.reminderStatus, json: state.reminderStatus === 201 ? { id: "test-reminder" } : { error: "inaccessible" } });
+    if (url.pathname.includes("/reminders") && method === "POST") {
+      if (state.reminderGate) await state.reminderGate;
+      if (state.reminderStatus === 201) state.reminders.push({ id: "test-reminder", ...body });
+      return route.fulfill({ status: state.reminderStatus, json: state.reminderStatus === 201 ? { id: "test-reminder" } : { error: "inaccessible" } });
+    }
     if (url.pathname === "/v1/core/schedules") {
       if (method === "GET") return state.listStatus === 0 ? route.abort("failed") : route.fulfill({ status: state.listStatus, json: { schedules: state.schedules } });
       if (method === "POST") {
@@ -44,7 +48,7 @@ async function mockApi(page) {
       if (state.detailGate) await state.detailGate;
       if (state.detailStatus !== 200) return route.fulfill({ status: state.detailStatus, json: { error: "inaccessible" } });
       const schedule = state.schedules.find((item) => item.id === url.pathname.split("/").at(-1));
-      return route.fulfill({ status: schedule ? 200 : 404, json: schedule ? { ...schedule, reminders: [] } : { error: "not_found" } });
+      return route.fulfill({ status: schedule ? 200 : 404, json: schedule ? { ...schedule, reminders: state.reminders } : { error: "not_found" } });
     }
     if (method === "PATCH" && url.pathname.startsWith("/v1/core/schedules/")) {
       if (state.updateStatus !== 200) return route.fulfill({ status: state.updateStatus, json: { error: "unavailable" } });
@@ -550,6 +554,29 @@ test("deleted detail closes when a reminder action returns 404", async ({ page }
   await expect(page.locator("dialog")).toHaveCount(0);
   await expect(page.locator("[data-view]")).not.toContainText("삭제된 비공개 일정");
   await expect(page.locator("[data-toast]")).toContainText("목록에서 제거했습니다");
+});
+
+test("reminder action shows progress and restores its button after failure", async ({ page }) => {
+  const state = await mockApi(page);
+  state.schedules = [{ id: "reminder", title: "리마인더 일정", start_at: "2099-01-01T09:00:00Z", status: "confirmed" }];
+  state.reminderStatus = 503;
+  let releaseReminder;
+  state.reminderGate = new Promise((resolve) => { releaseReminder = resolve; });
+  await page.goto("/");
+  await login(page);
+  await navigate(page, "schedules");
+  await page.locator("[data-detail-id]").click();
+  const button = page.locator("[data-add-reminder] button[type=submit]");
+  await button.click();
+  await expect(button).toBeDisabled();
+  await expect(button).toHaveText("추가 중…");
+  releaseReminder();
+  await expect(button).toBeEnabled();
+  await expect(button).toHaveText("리마인더 추가");
+  state.reminderStatus = 201;
+  state.reminderGate = null;
+  await button.click();
+  await expect(page.locator("dialog")).toContainText("10분 전");
 });
 
 test("logout discards a late delete response", async ({ page }) => {
