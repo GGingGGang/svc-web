@@ -409,6 +409,27 @@ test("AI rate limiting keeps the text and manual creation available", async ({ p
   expect(state.schedules).toHaveLength(0);
 });
 
+test("AI reference instant and timezone can be reviewed and changed", async ({ page }) => {
+  const state = await mockApi(page);
+  await page.goto("/");
+  await login(page);
+  await navigate(page, "extract");
+  const form = page.locator("[data-extract-form]");
+  await expect(form).toContainText("기준 일시 (브라우저 시간대");
+  await form.locator("[name=text]").fill("다음 주 회의");
+  await form.locator("[name=now]").fill("2030-06-15T09:00");
+  await form.locator("[name=timezone]").fill("Asia/Seoul");
+  await form.locator("button[type=submit]").click();
+  await expect(page.locator("[data-extract-form] button[type=submit]")).toBeEnabled();
+  const first = state.calls.find((call) => call.path.endsWith("/extract"));
+  await form.locator("[name=now]").fill("2030-06-16T09:00");
+  await form.locator("button[type=submit]").click();
+  await expect.poll(() => state.calls.filter((call) => call.path.endsWith("/extract")).length).toBe(2);
+  const second = state.calls.findLast((call) => call.path.endsWith("/extract"));
+  expect(second.body.now).not.toBe(first.body.now);
+  expect(second.body.timezone).toBe("Asia/Seoul");
+});
+
 test("AI with no configured key is disabled until a private key is entered", async ({ page }) => {
   const state = await mockApi(page);
   state.extractStatus = 502;

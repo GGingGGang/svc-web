@@ -151,7 +151,7 @@ function extractView(state) {
       ${draft.error ? `<div class="alert error" role="alert">${escapeHtml(draft.error)}</div>` : ""}
       <div class="form-grid">
         <label class="field span-2"><span>일정 원문</span><textarea class="textarea" name="text" required>${escapeHtml(draft.text)}</textarea></label>
-        <label class="field"><span>기준 일시</span><input class="input" name="now" type="datetime-local" required value="${escapeHtml(draft.now)}"></label>
+        <label class="field"><span>기준 일시 (브라우저 시간대 ${escapeHtml(getBrowserTimezone())})</span><input class="input" name="now" type="datetime-local" required value="${escapeHtml(draft.now)}"></label>
         <label class="field"><span>해석 시간대 (IANA)</span><input class="input" name="timezone" required value="${escapeHtml(draft.timezone)}"></label>
         <label class="field span-2"><span>개인 Gemini 키 (선택, 이 화면의 메모리에만 유지)</span><input class="input" name="api_key" type="password" autocomplete="off"></label>
       </div><div class="form-actions"><button type="submit" class="btn btn-primary" ${draft.busy || (draft.keyUnavailable && !draft.key) ? "disabled" : ""}>${draft.busy ? "추출 중…" : "후보 추출"}</button></div>
