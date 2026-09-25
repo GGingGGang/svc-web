@@ -66,6 +66,10 @@ function loadingMarkup() {
 function errorMarkup(message) {
   return `<div class="api-error"><p>${escapeHtml(message)}</p><button class="btn btn-secondary" type="button" data-reload>다시 시도</button></div>`;
 }
+function scheduleFailure(error, action) {
+  const reason = error.status === 401 ? "로그인이 만료되었습니다. 다시 로그인하세요." : error.status === 403 ? "이 일정에 접근할 권한이 없습니다. 목록을 새로고침하세요." : error.status === 429 ? "요청이 너무 많습니다. 잠시 후 다시 시도하세요." : error.status >= 500 ? "서버에 문제가 생겼습니다. 잠시 후 다시 시도하세요." : error.status ? "입력값이나 요청 상태를 확인하세요." : "통신이 끊겼습니다. 연결을 확인하고 다시 시도하세요.";
+  return `${action} ${reason}`;
+}
 function scheduleItem(schedule) {
   return `<li class="schedule-item"><span class="schedule-date">${scheduleDate(schedule)}</span><div><strong>${escapeHtml(schedule.title)}</strong><p>${escapeHtml(schedule.location || "장소 없음")}</p></div><span class="schedule-time">${scheduleTime(schedule)}</span></li>`;
 }
@@ -355,7 +359,7 @@ function init() {
     render();
     try {
       const payload = await schedules.extract({ text: draft.text, now: new Date(draft.now).toISOString(), timezone: draft.timezone, apiKey: draft.key, signal: controller.signal });
-      if (!Array.isArray(payload?.candidates) || payload.candidates.length > 20) throw new Error("AI 응답의 후보 형식이 올바르지 않습니다.");
+      if (!Array.isArray(payload?.candidates) || payload.candidates.length > 20) throw Object.assign(new Error("AI 응답의 후보 형식이 올바르지 않습니다. 원문을 나눠 다시 추출하세요."), { code: "invalid_ai_response" });
       if (generation !== draft.generation || currentRoute() !== "extract") return;
       draft.candidates = payload.candidates.map((data) => ({ data: data && typeof data === "object" && !Array.isArray(data) ? data : {}, selected: true, saved: false, error: candidateError(data), key: null, fingerprint: null }));
       draft.extracted = true;
@@ -363,7 +367,7 @@ function init() {
       draft.keyUnavailable = false;
     } catch (error) {
       if (generation !== draft.generation || currentRoute() !== "extract") return;
-      draft.error = controller.signal.aborted
+      draft.error = error.code === "invalid_ai_response" ? error.message : controller.signal.aborted
         ? "AI 추출 시간이 초과되거나 요청이 취소되었습니다. 원문을 확인하고 다시 시도하세요."
         : error.status === 429
           ? "AI 사용량 제한에 도달했습니다. 잠시 후 다시 시도하세요."
@@ -371,7 +375,7 @@ function init() {
             ? "AI 공용 키가 설정되지 않았습니다. 개인 키를 입력하거나 직접 일정을 만드세요."
           : error.status === 502
             ? "AI 서비스 또는 키를 사용할 수 없습니다. 키를 확인하거나 직접 일정을 만드세요."
-            : `AI 후보를 추출하지 못했습니다. ${error.message}`;
+            : scheduleFailure(error, "AI 후보를 추출하지 못했습니다.");
       draft.keyUnavailable = error.code === "ai_key_unavailable";
     } finally {
       clearTimeout(timeout);
@@ -446,7 +450,7 @@ function init() {
         candidate.selected = false;
       } catch (error) {
         if (auth.sessionVersion !== sessionVersion || application.hidden) return;
-        candidate.error = error.status ? `저장 실패 (HTTP ${error.status}). 수정하거나 다시 시도하세요.` : "저장 결과를 확인할 수 없습니다. 목록을 확인한 뒤 같은 작업으로 다시 시도하세요.";
+        candidate.error = error.status ? scheduleFailure(error, "저장 실패.") : "저장 결과를 확인할 수 없습니다. 목록을 확인한 뒤 같은 작업으로 다시 시도하세요.";
       }
     }
     draft.saving = false;
@@ -489,7 +493,7 @@ function init() {
       item = await schedules.get(id);
     } catch (error) {
       if (auth.sessionVersion !== sessionVersion || application.hidden) return;
-      notify(error.status === 404 ? "일정이 삭제되었거나 접근할 수 없습니다. 목록을 새로고침합니다." : "상세를 불러오지 못했습니다. 다시 시도하세요.", true);
+      notify(error.status === 404 ? "일정이 삭제되었거나 접근할 수 없습니다. 목록을 새로고침합니다." : scheduleFailure(error, "상세를 불러오지 못했습니다."), true);
       if (error.status === 404) await loadSchedules();
       else { trigger.disabled = false; trigger.textContent = "상세"; }
       return;
@@ -556,7 +560,7 @@ function init() {
       state.periodItems = items;
     } catch (error) {
       if (auth.sessionVersion !== sessionVersion || state.period !== period || application.hidden) return;
-      state.periodError = error.status === 401 ? "로그인이 만료되었습니다. 다시 로그인한 뒤 기간을 조회하세요." : "선택 기간의 일정을 불러오지 못했습니다. 기간을 확인한 뒤 다시 시도하세요.";
+      state.periodError = scheduleFailure(error, "선택 기간의 일정을 불러오지 못했습니다.");
     } finally {
       if (auth.sessionVersion !== sessionVersion || state.period !== period || application.hidden) return;
       state.periodLoading = false;
@@ -594,7 +598,7 @@ function init() {
     } catch (error) {
       if (auth.sessionVersion !== sessionVersion || application.hidden) return;
       state.items = [];
-      state.error = error.status === 401 ? "로그인이 만료되었습니다. 다시 로그인한 뒤 일정을 조회하세요." : `일정을 불러오지 못했습니다. API Gateway 연결을 확인한 뒤 다시 시도하세요. (${error.message})`;
+      state.error = scheduleFailure(error, "일정을 불러오지 못했습니다.");
     } finally {
       if (auth.sessionVersion !== sessionVersion || application.hidden) return;
       state.loading = false;
@@ -711,7 +715,7 @@ function init() {
       const alert = document.createElement("div");
       alert.className = "alert error";
       alert.setAttribute("role", "alert");
-      alert.textContent = error.code === "expired_key" ? error.message : error.status ? `일정을 저장하지 못했습니다. ${error.status === 401 ? "로그인이 만료되었습니다." : error.status === 409 ? "저장 내용이 충돌했습니다." : "입력값이나 서버 상태를 확인하세요."}` : `${error.name === "TimeoutError" ? "요청 시간이 초과됐습니다." : "응답을 받지 못했습니다."} 저장 여부를 확인할 수 없습니다. 목록을 확인하거나 같은 작업 결과를 다시 확인하세요.`;
+      alert.textContent = error.code === "expired_key" ? error.message : error.status === 409 ? "일정을 저장하지 못했습니다. 저장 내용이 충돌했습니다. 최신 목록을 확인하세요." : error.status ? scheduleFailure(error, "일정을 저장하지 못했습니다.") : `${error.name === "TimeoutError" ? "요청 시간이 초과됐습니다." : "응답을 받지 못했습니다."} 저장 여부를 확인할 수 없습니다. 목록을 확인하거나 같은 작업 결과를 다시 확인하세요.`;
       if (!error.status && error.code !== "expired_key") {
         const retry = document.createElement("button");
         retry.type = "button";
@@ -751,7 +755,7 @@ function init() {
       if (auth.sessionVersion !== sessionVersion || application.hidden) return;
       button.disabled = false;
       button.textContent = "삭제";
-      notify(error.status ? "일정을 삭제하지 못했습니다. 상태를 확인한 뒤 다시 시도하세요." : "삭제 결과를 확인할 수 없습니다. 목록을 새로고침한 뒤 같은 삭제 작업으로 다시 시도하세요.", true);
+      notify(error.status ? scheduleFailure(error, "일정을 삭제하지 못했습니다.") : "삭제 결과를 확인할 수 없습니다. 목록을 새로고침한 뒤 같은 삭제 작업으로 다시 시도하세요.", true);
     }
   };
   document.querySelector("[data-timezone]").value = getBrowserTimezone();

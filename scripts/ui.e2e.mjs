@@ -27,7 +27,7 @@ async function mockApi(page) {
     if (url.pathname.endsWith("/logout")) return route.fulfill({ status: 204 });
     if (url.pathname === "/v1/core/schedules/extract") return route.fulfill({ status: state.extractStatus, json: state.extractStatus === 200 ? { candidates: state.extractCandidates, truncated: state.extractTruncated } : { error: state.extractErrorCode } });
     if (url.pathname === "/v1/core/schedules") {
-      if (method === "GET") return route.fulfill({ status: state.listStatus, json: { schedules: state.schedules } });
+      if (method === "GET") return state.listStatus === 0 ? route.abort("failed") : route.fulfill({ status: state.listStatus, json: { schedules: state.schedules } });
       if (method === "POST") {
         if (state.saveStatus !== 201 || body.title === state.failTitle) return route.fulfill({ status: state.saveStatus !== 201 ? state.saveStatus : 503, json: { error: "unavailable" } });
         const key = request.headers()["idempotency-key"];
@@ -240,6 +240,19 @@ test("expired schedule access is distinct from an empty list", async ({ page }) 
   await login(page);
   await expect(page.locator("[data-view]")).toContainText("로그인이 만료되었습니다");
   await expect(page.locator("[data-view]")).not.toContainText("아직 일정이 없습니다");
+});
+
+test("schedule errors distinguish permission, limit, server, and connection", async ({ page }) => {
+  const state = await mockApi(page);
+  state.listStatus = 403;
+  await page.goto("/");
+  await login(page);
+  for (const [status, message] of [[403, "권한이 없습니다"], [429, "요청이 너무 많습니다"], [503, "서버에 문제가"], [0, "통신이 끊겼습니다"]]) {
+    state.listStatus = status;
+    if (status !== 403) await page.locator("[data-reload]").click();
+    await expect(page.locator("[data-view]")).toContainText(message);
+    await expect(page.locator("[data-view]")).not.toContainText("아직 일정이 없습니다");
+  }
 });
 
 test("schedule deletion confirms the title and waits for the server", async ({ page }) => {
