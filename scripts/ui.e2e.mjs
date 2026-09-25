@@ -111,6 +111,10 @@ test("auth panels, failures, logout and re-login remain usable", async ({ page }
   await expect(page.locator("[data-auth-anonymous]")).toBeHidden();
   await expect(page.locator("[data-authenticated]")).toBeVisible();
   await expect.poll(() => state.calls.some((call) => call.path.endsWith("/schedules"))).toBe(true);
+  if (testInfo.project.name === "desktop") {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await expect(page.locator("[data-logout]")).toBeVisible();
+  }
   await noPageOverflow(page);
   await page.screenshot({ path: testInfo.outputPath("dashboard-empty.png"), fullPage: true, animations: "disabled" });
   await navigate(page, "create");
