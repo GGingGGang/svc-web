@@ -5,7 +5,7 @@ const tokens = { access_token: "test-access", refresh_token: "test-refresh", exp
 
 // No account or schedule is written to a real service by these browser checks.
 async function mockApi(page) {
-  const state = { loginStatus: 200, registerStatus: 201, registerMessage: "Invalid email", refreshStatus: 200, listStatus: 200, saveStatus: 201, saveResponseLost: false, createResults: new Map(), failTitle: null, extractStatus: 200, extractErrorCode: "extraction_failed", extractCandidates: [], extractTruncated: false, updateStatus: 200, deleteStatus: 204, deleteGate: null, detailGate: null, detailStatus: 200, reminderStatus: 201, reminderGate: null, reminders: [], schedules: [], calls: [] };
+  const state = { loginStatus: 200, registerStatus: 201, registerMessage: "Invalid email", refreshStatus: 200, listStatus: 200, requestId: null, serviceStatus: { schedules: "available", followup: "available" }, saveStatus: 201, saveResponseLost: false, createResults: new Map(), failTitle: null, extractStatus: 200, extractErrorCode: "extraction_failed", extractCandidates: [], extractTruncated: false, updateStatus: 200, deleteStatus: 204, deleteGate: null, detailGate: null, detailStatus: 200, reminderStatus: 201, reminderGate: null, reminders: [], schedules: [], calls: [] };
   await page.route("**/*", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -25,6 +25,7 @@ async function mockApi(page) {
     if (url.pathname.endsWith("/refresh")) return route.fulfill({ status: state.refreshStatus, json: state.refreshStatus === 200 ? tokens : { error: "invalid_refresh_token" } });
     if (url.pathname.endsWith("/register")) return route.fulfill({ status: state.registerStatus, json: state.registerStatus === 201 ? { id: "test-user" } : state.registerStatus === 400 ? { statusCode: 400, error: "Bad Request", message: state.registerMessage } : { error: "email_already_registered" } });
     if (url.pathname.endsWith("/logout")) return route.fulfill({ status: 204 });
+    if (url.pathname === "/v1/core/status") return route.fulfill({ status: state.serviceStatus.schedules === "unavailable" ? 503 : 200, json: state.serviceStatus });
     if (url.pathname === "/v1/core/schedules/extract") return route.fulfill({ status: state.extractStatus, json: state.extractStatus === 200 ? { candidates: state.extractCandidates, truncated: state.extractTruncated } : { error: state.extractErrorCode } });
     if (url.pathname.includes("/reminders") && method === "POST") {
       if (state.reminderGate) await state.reminderGate;
@@ -32,7 +33,7 @@ async function mockApi(page) {
       return route.fulfill({ status: state.reminderStatus, json: state.reminderStatus === 201 ? { id: "test-reminder" } : { error: "inaccessible" } });
     }
     if (url.pathname === "/v1/core/schedules") {
-      if (method === "GET") return state.listStatus === 0 ? route.abort("failed") : route.fulfill({ status: state.listStatus, json: { schedules: state.schedules } });
+      if (method === "GET") return state.listStatus === 0 ? route.abort("failed") : route.fulfill({ status: state.listStatus, headers: state.requestId ? { "X-Request-ID": state.requestId, "Access-Control-Expose-Headers": "X-Request-ID" } : {}, json: { schedules: state.schedules } });
       if (method === "POST") {
         if (state.saveStatus !== 201 || body.title === state.failTitle) return route.fulfill({ status: state.saveStatus !== 201 ? state.saveStatus : 503, json: { error: "unavailable" } });
         const key = request.headers()["idempotency-key"];
@@ -110,11 +111,11 @@ test("auth panels, failures, logout and re-login remain usable", async ({ page }
   await login(page);
   await expect(page.locator("[data-auth-anonymous]")).toBeHidden();
   await expect(page.locator("[data-authenticated]")).toBeVisible();
-  await expect.poll(() => state.calls.some((call) => call.path.endsWith("/schedules"))).toBe(true);
   if (testInfo.project.name === "desktop") {
     await page.setViewportSize({ width: 1280, height: 720 });
     await expect(page.locator("[data-logout]")).toBeVisible();
   }
+  await expect.poll(() => state.calls.some((call) => call.path.endsWith("/schedules"))).toBe(true);
   await noPageOverflow(page);
   await page.screenshot({ path: testInfo.outputPath("dashboard-empty.png"), fullPage: true, animations: "disabled" });
   await navigate(page, "create");
@@ -263,6 +264,29 @@ test("schedule errors distinguish permission, limit, server, and connection", as
     await expect(page.locator("[data-view]")).toContainText(message);
     await expect(page.locator("[data-view]")).not.toContainText("아직 일정이 없습니다");
   }
+});
+
+test("schedule failures show the server correlation ID", async ({ page }) => {
+  const state = await mockApi(page);
+  state.listStatus = 503;
+  state.requestId = "123e4567-e89b-12d3-a456-426614174000";
+  await page.goto("/");
+  await login(page);
+  await expect(page.locator("[data-view]")).toContainText(`오류 ID: ${state.requestId}`);
+});
+
+test("service status distinguishes followup delay from unavailable schedules", async ({ page }) => {
+  const state = await mockApi(page);
+  state.serviceStatus = { schedules: "available", followup: "delayed" };
+  await page.goto("/");
+  await login(page);
+  await expect(page.locator("[data-service-status]")).toContainText("일정 기능은 사용 가능하지만 후속 처리 전달이 지연 중");
+  state.serviceStatus = { schedules: "unavailable", followup: "delayed" };
+  await page.reload();
+  await expect(page.locator("[data-service-status]")).toContainText("일정 기능을 현재 사용할 수 없습니다");
+  state.serviceStatus = { schedules: "available", followup: "available" };
+  await page.reload();
+  await expect(page.locator("[data-service-status]")).toBeHidden();
 });
 
 test("schedule deletion confirms the title and waits for the server", async ({ page }) => {
@@ -454,6 +478,38 @@ test("AI rate limiting keeps the text and manual creation available", async ({ p
   expect(state.schedules).toHaveLength(0);
 });
 
+test("AI upstream failure is distinguished from usage limits", async ({ page }) => {
+  const state = await mockApi(page);
+  state.extractStatus = 503;
+  state.extractErrorCode = "ai_upstream_unavailable";
+  await page.goto("/");
+  await login(page);
+  await navigate(page, "extract");
+  const form = page.locator("[data-extract-form]");
+  await form.locator("[name=text]").fill("Tomorrow at 3 PM");
+  await form.locator("button[type=submit]").click();
+  await expect(form.locator("[name=text]")).toHaveValue("Tomorrow at 3 PM");
+  await expect(form.locator("[role=alert]")).toContainText("외부 AI 서비스에 문제가");
+  await expect(form.locator("[role=alert]")).not.toContainText("사용량 제한");
+  await expect(page.locator('[data-view] a[href="#create"]')).toBeVisible();
+});
+
+test("invalid private AI key is identified", async ({ page }) => {
+  const state = await mockApi(page);
+  state.extractStatus = 502;
+  state.extractErrorCode = "ai_key_invalid";
+  await page.goto("/");
+  await login(page);
+  await navigate(page, "extract");
+  const form = page.locator("[data-extract-form]");
+  await form.locator("[name=text]").fill("Tomorrow at 3 PM");
+  await form.locator("[name=api_key]").fill("private-test-key");
+  await form.locator("button[type=submit]").click();
+  await expect(form.locator("[name=text]")).toHaveValue("Tomorrow at 3 PM");
+  await expect(form.locator("[role=alert]")).toContainText("개인 AI 키가 올바르지 않습니다");
+  await expect(page.locator('[data-view] a[href="#create"]')).toBeVisible();
+});
+
 test("AI input errors stay beside the field and focus the first invalid value", async ({ page }) => {
   const state = await mockApi(page);
   await page.goto("/");
@@ -473,6 +529,18 @@ test("AI input errors stay beside the field and focus the first invalid value", 
   await expect(form.locator('[data-field-error="timezone"]')).toContainText("IANA 시간대");
   await expect(form.locator("[name=timezone]")).toBeFocused();
   expect(state.calls.filter((call) => call.path.endsWith("/extract"))).toHaveLength(0);
+});
+
+test("AI with no events shows zero candidates and creates nothing", async ({ page }) => {
+  const state = await mockApi(page);
+  await page.goto("/");
+  await login(page);
+  await navigate(page, "extract");
+  await page.locator("[data-extract-form] [name=text]").fill("일정 없는 메모");
+  await page.locator("[data-extract-form] button[type=submit]").click();
+  await expect(page.locator("[data-view]")).toContainText("추출된 일정 후보가 없습니다");
+  await expect(page.locator("[data-candidate]")).toHaveCount(0);
+  expect(state.calls.filter((call) => call.method === "POST" && call.path === "/v1/core/schedules")).toHaveLength(0);
 });
 
 test("AI reference instant and timezone can be reviewed and changed", async ({ page }) => {
@@ -532,6 +600,25 @@ test("manual schedule keeps optional time fields and verifies the saved detail",
   await page.locator("[data-detail-id]").click();
   await expect(page.locator("dialog")).toContainText("종일 행사");
   await page.locator("[data-close-detail]").click();
+});
+
+test("past schedule can be recorded without promising a new reminder delivery", async ({ page }) => {
+  const state = await mockApi(page);
+  await page.goto("/");
+  await login(page);
+  await navigate(page, "create");
+  const form = page.locator("[data-schedule-form]");
+  await expect(page.locator("[data-view]")).toContainText("실제 발송 알림은 현재 지원하지 않습니다");
+  await form.locator("[name=title]").fill("지난 기록");
+  await form.locator("[name=start_at]").fill("2020-01-02T09:00");
+  await form.locator("[name=reminder_minutes]").fill("10");
+  await form.locator("button[type=submit]").click();
+  await expect(page).toHaveURL(/#schedules$/);
+  const create = state.calls.find((call) => call.method === "POST" && call.path === "/v1/core/schedules");
+  expect(new Date(create.body.start_at).getTime()).toBeLessThan(Date.now());
+  expect(create.body.reminders).toEqual([{ minutes_before: 10, channel: "none" }]);
+  await page.locator("[data-toggle-past]").click();
+  await expect(page.locator("[data-view]")).toContainText("지난 기록");
 });
 
 test("logout discards a late detail response", async ({ page }) => {

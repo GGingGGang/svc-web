@@ -482,6 +482,14 @@ svg {
   margin: 0 auto;
   padding: 36px 32px;
 }
+.service-status {
+  margin: 16px 32px 0;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+}
+.service-status[hidden] { display: none; }
 .page-heading {
   display: flex;
   align-items: flex-end;

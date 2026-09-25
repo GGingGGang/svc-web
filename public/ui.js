@@ -168,6 +168,7 @@ function init() {
   const schedules = new ScheduleClient({ config, authClient: auth });
   const anonymous = document.querySelector("[data-auth-anonymous]");
   const application = document.querySelector("[data-authenticated]");
+  const serviceStatus = document.querySelector("[data-service-status]");
   const view = document.querySelector("[data-view]");
   const toast = document.querySelector("[data-toast]");
   const state = { items: [], loading: false, error: "", showPast: false, page: 0, period: null, periodItems: [], periodLoading: false, periodError: "", draft: {}, editDraft: {}, editingId: null, editKey: null, editKeyAt: 0, editFingerprint: null, deleteKeys: new Map(), createKey: null, createKeyAt: 0, createFingerprint: null,
@@ -249,6 +250,18 @@ function init() {
     toastTimer = setTimeout(() => {
       toast.hidden = true;
     }, 4200);
+  };
+  const refreshServiceStatus = async () => {
+    let message = "일정 API 상태를 확인할 수 없습니다. 연결을 확인하고 다시 시도하세요.";
+    try {
+      const response = await fetch(`${config.scheduleBasePath.replace(/\/+$/, "")}/status`, { signal: AbortSignal.timeout(5000) });
+      const status = await response.json();
+      if (status.schedules === "available" && status.followup === "available" && response.ok) message = "";
+      else if (status.schedules === "available" && status.followup === "delayed" && response.ok) message = "일정 기능은 사용 가능하지만 후속 처리 전달이 지연 중입니다. 알림 등 후속 결과를 기다려 주세요.";
+      else if (status.schedules === "unavailable") message = "일정 기능을 현재 사용할 수 없습니다. 잠시 후 다시 시도하세요.";
+    } catch { /* A failed status check must not appear healthy. */ }
+    serviceStatus.textContent = message;
+    serviceStatus.hidden = !message;
   };
   const menuButton = document.querySelector("button[data-menu-toggle]");
   const sidebar = document.querySelector(".d-sidebar");
@@ -390,6 +403,10 @@ function init() {
           ? "AI 사용량 제한에 도달했습니다. 잠시 후 다시 시도하세요."
           : error.code === "ai_key_unavailable"
             ? "AI 공용 키가 설정되지 않았습니다. 개인 키를 입력하거나 직접 일정을 만드세요."
+          : error.code === "ai_upstream_unavailable"
+            ? "외부 AI 서비스에 문제가 생겼습니다. 원문을 유지한 채 나중에 다시 시도하거나 직접 일정을 만드세요."
+          : error.code === "ai_key_invalid"
+            ? "개인 AI 키가 올바르지 않습니다. 키를 확인하거나 직접 일정을 만드세요."
           : error.status === 502
             ? "AI 서비스 또는 키를 사용할 수 없습니다. 키를 확인하거나 직접 일정을 만드세요."
             : scheduleFailure(error, "AI 후보를 추출하지 못했습니다.");
@@ -918,6 +935,8 @@ function init() {
       element.title = statusText(payload);
     }),
   );
+  refreshServiceStatus();
+  setInterval(refreshServiceStatus, 30000);
   if (auth.hasSession()) openApp(true);
   else setMode("login");
 }
