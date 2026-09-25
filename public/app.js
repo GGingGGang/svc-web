@@ -86,14 +86,20 @@ export class AuthClient {
   }
 
   async request(path, body) {
-    const response = await this.fetchImpl(authUrl(this.config, path), {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    });
+    let response;
+    try {
+      response = await this.fetchImpl(authUrl(this.config, path), {
+        method: "POST",
+        signal: AbortSignal.timeout(15000),
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+    } catch {
+      throw new Error("인증 요청 결과를 확인할 수 없습니다. 연결을 확인하고 다시 시도하세요.");
+    }
     const payload = await safeJson(response);
     if (!response.ok) {
       const error = new Error(errorMessage(response.status, payload));

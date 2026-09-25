@@ -384,6 +384,7 @@ function init() {
   const saveCandidates = async (event) => {
     event.preventDefault();
     const draft = state.extract;
+    const sessionVersion = auth.sessionVersion;
     const selected = [];
     for (const fieldset of event.currentTarget.querySelectorAll("[data-candidate]")) {
       const candidate = draft.candidates[Number(fieldset.dataset.candidate)];
@@ -440,9 +441,11 @@ function init() {
     for (const { candidate, schedule } of selected) {
       try {
         await schedules.create(schedule, candidate.key);
+        if (auth.sessionVersion !== sessionVersion || application.hidden) return;
         candidate.saved = true;
         candidate.selected = false;
       } catch (error) {
+        if (auth.sessionVersion !== sessionVersion || application.hidden) return;
         candidate.error = error.status ? `저장 실패 (HTTP ${error.status}). 수정하거나 다시 시도하세요.` : "저장 결과를 확인할 수 없습니다. 목록을 확인한 뒤 같은 작업으로 다시 시도하세요.";
       }
     }
@@ -451,6 +454,30 @@ function init() {
     if (selected.some(({ candidate }) => candidate.saved)) await loadSchedules();
   };
   let detailDialog;
+  const clearPrivateState = () => {
+    detailDialog?.close();
+    state.items = [];
+    displayTimezone = getBrowserTimezone();
+    state.period = null;
+    state.periodItems = [];
+    state.draft = {};
+    state.createKey = null;
+    state.createKeyAt = 0;
+    state.createFingerprint = null;
+    state.editDraft = {};
+    state.editingId = null;
+    state.editKey = null;
+    state.editFingerprint = null;
+    state.deleteKeys.clear();
+    extractController?.abort();
+    state.extract.generation++;
+    state.extract.key = "";
+    state.extract.candidates = [];
+    state.extract.text = "";
+    state.extract.error = "";
+    state.error = "";
+    view.replaceChildren();
+  };
   const showDetail = async (event) => {
     const id = event.currentTarget.dataset.detailId;
     const trigger = event.currentTarget;
@@ -527,9 +554,9 @@ function init() {
       const items = await schedules.list({ from: new Date(`${period.from}T00:00:00`).toISOString(), to: end.toISOString() });
       if (auth.sessionVersion !== sessionVersion || state.period !== period || application.hidden) return;
       state.periodItems = items;
-    } catch {
+    } catch (error) {
       if (auth.sessionVersion !== sessionVersion || state.period !== period || application.hidden) return;
-      state.periodError = "선택 기간의 일정을 불러오지 못했습니다. 기간을 확인한 뒤 다시 시도하세요.";
+      state.periodError = error.status === 401 ? "로그인이 만료되었습니다. 다시 로그인한 뒤 기간을 조회하세요." : "선택 기간의 일정을 불러오지 못했습니다. 기간을 확인한 뒤 다시 시도하세요.";
     } finally {
       if (auth.sessionVersion !== sessionVersion || state.period !== period || application.hidden) return;
       state.periodLoading = false;
@@ -567,7 +594,7 @@ function init() {
     } catch (error) {
       if (auth.sessionVersion !== sessionVersion || application.hidden) return;
       state.items = [];
-      state.error = `일정을 불러오지 못했습니다. API Gateway 연결을 확인한 뒤 다시 시도하세요. (${error.message})`;
+      state.error = error.status === 401 ? "로그인이 만료되었습니다. 다시 로그인한 뒤 일정을 조회하세요." : `일정을 불러오지 못했습니다. API Gateway 연결을 확인한 뒤 다시 시도하세요. (${error.message})`;
     } finally {
       if (auth.sessionVersion !== sessionVersion || application.hidden) return;
       state.loading = false;
@@ -605,6 +632,7 @@ function init() {
   const saveSchedule = async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
+    const sessionVersion = auth.sessionVersion;
     if (form.querySelector("button[type=submit]").disabled) return;
     const values = Object.fromEntries(new FormData(form));
     const editing = currentRoute() === "edit";
@@ -645,7 +673,9 @@ function init() {
           throw expired;
         }
         await schedules.update(state.editingId, changes, state.editKey);
+        if (auth.sessionVersion !== sessionVersion || application.hidden) return;
         await schedules.get(state.editingId);
+        if (auth.sessionVersion !== sessionVersion || application.hidden) return;
         state.editDraft = {};
         state.editingId = null;
         state.editKey = null;
@@ -664,7 +694,9 @@ function init() {
           throw expired;
         }
         const created = await schedules.create(schedule, state.createKey);
+        if (auth.sessionVersion !== sessionVersion || application.hidden) return;
         await schedules.get(created.id);
+        if (auth.sessionVersion !== sessionVersion || application.hidden) return;
         state.draft = {};
         state.createKey = null;
         state.createKeyAt = 0;
@@ -674,6 +706,7 @@ function init() {
       location.hash = "#schedules";
       await loadSchedules();
     } catch (error) {
+      if (auth.sessionVersion !== sessionVersion || application.hidden) return;
       setBusy(form, false);
       const alert = document.createElement("div");
       alert.className = "alert error";
@@ -692,6 +725,7 @@ function init() {
   };
   const deleteSchedule = async (event) => {
     const button = event.currentTarget;
+    const sessionVersion = auth.sessionVersion;
     const item = state.items.find((schedule) => schedule.id === button.dataset.deleteId);
     if (!item || !confirm(`'${item.title}' 일정을 삭제할까요? 삭제하면 복구할 수 없습니다.`)) return;
     let operation = state.deleteKeys.get(item.id);
@@ -707,12 +741,14 @@ function init() {
     button.textContent = "삭제 중…";
     try {
       await schedules.delete(item.id, operation.key);
+      if (auth.sessionVersion !== sessionVersion || application.hidden) return;
       state.deleteKeys.delete(item.id);
       state.items = state.items.filter((schedule) => schedule.id !== item.id);
       state.periodItems = state.periodItems.filter((schedule) => schedule.id !== item.id);
       render();
       notify("일정이 삭제되었습니다.");
     } catch (error) {
+      if (auth.sessionVersion !== sessionVersion || application.hidden) return;
       button.disabled = false;
       button.textContent = "삭제";
       notify(error.status ? "일정을 삭제하지 못했습니다. 상태를 확인한 뒤 다시 시도하세요." : "삭제 결과를 확인할 수 없습니다. 목록을 새로고침한 뒤 같은 삭제 작업으로 다시 시도하세요.", true);
@@ -750,10 +786,12 @@ function init() {
     .addEventListener("submit", async (event) => {
       event.preventDefault();
       const form = event.currentTarget;
+      if (form.querySelector("button[type=submit]").disabled) return;
       setBusy(form, true, "로그인 중…");
       try {
         await auth.login(Object.fromEntries(new FormData(form)));
         setBusy(form, false);
+        clearPrivateState();
         await openApp();
         notify("로그인되었습니다.");
       } catch (error) {
@@ -800,6 +838,7 @@ function init() {
         return;
       }
       setBusy(registerForm, false);
+      clearPrivateState();
       await openApp();
       notify("계정을 만들고 로그인했습니다.");
     });
@@ -807,28 +846,7 @@ function init() {
     .querySelector("[data-logout]")
     .addEventListener("click", async () => {
       const pending = auth.logout();
-      detailDialog?.close();
-      state.items = [];
-      displayTimezone = getBrowserTimezone();
-      state.period = null;
-      state.periodItems = [];
-      state.draft = {};
-      state.createKey = null;
-      state.createKeyAt = 0;
-      state.createFingerprint = null;
-      state.editDraft = {};
-      state.editingId = null;
-      state.editKey = null;
-      state.editFingerprint = null;
-      state.deleteKeys.clear();
-      extractController?.abort();
-      state.extract.generation++;
-      state.extract.key = "";
-      state.extract.candidates = [];
-      state.extract.text = "";
-      state.extract.error = "";
-      state.error = "";
-      view.replaceChildren();
+      clearPrivateState();
       closeMenu();
       anonymous.hidden = false;
       application.hidden = true;

@@ -100,6 +100,18 @@ test("auth errors stay user-facing without exposing response content", () => {
   assert.match(errorMessage(503, {}), /HTTP 503/);
 });
 
+test("auth requests have a deadline and hide transport details", async () => {
+  const client = new AuthClient({ storage: storage(), fetchImpl: async (_url, options) => {
+    assert.equal(options.signal.aborted, false);
+    throw new Error("private upstream address");
+  } });
+  await assert.rejects(() => client.login({ email: "user@example.com", password: "secret" }), (error) => {
+    assert.match(error.message, /연결을 확인하고 다시 시도하세요/);
+    assert.doesNotMatch(error.message, /private upstream address/);
+    return true;
+  });
+});
+
 test("schedule client follows the core schedule contract with bearer auth", async () => {
   const session = storage();
   const auth = new AuthClient({ storage: session, fetchImpl: async () => tokenResponse() });

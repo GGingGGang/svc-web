@@ -107,6 +107,8 @@ test("auth panels, failures, logout and re-login remain usable", async ({ page }
   await expect.poll(() => state.calls.some((call) => call.path.endsWith("/schedules"))).toBe(true);
   await noPageOverflow(page);
   await page.screenshot({ path: testInfo.outputPath("dashboard-empty.png"), fullPage: true, animations: "disabled" });
+  await navigate(page, "create");
+  await page.locator("[data-schedule-form] [name=title]").fill("첫 계정의 비공개 초안");
   const menu = page.locator("button[data-menu-toggle]").first();
   if (await menu.isVisible()) await menu.click();
   await page.locator("[data-logout]").click();
@@ -114,6 +116,7 @@ test("auth panels, failures, logout and re-login remain usable", async ({ page }
   await expect(page.locator("[data-login-form] button[type=submit]")).toBeEnabled();
   await login(page);
   await expect(page.locator("[data-authenticated]")).toBeVisible();
+  await expect(page.locator("[data-schedule-form] [name=title]")).toHaveValue("");
   expect(errors).toEqual([]);
 });
 
@@ -228,6 +231,15 @@ test("list retry and failed save preserve input, successful save renders escaped
   expect(saved.body).toMatchObject({ title, location: "온라인", status: "confirmed", all_day: false, source: "manual" });
   await noPageOverflow(page);
   await page.screenshot({ path: testInfo.outputPath("schedules.png"), fullPage: true, animations: "disabled" });
+});
+
+test("expired schedule access is distinct from an empty list", async ({ page }) => {
+  const state = await mockApi(page);
+  state.listStatus = 401;
+  await page.goto("/");
+  await login(page);
+  await expect(page.locator("[data-view]")).toContainText("로그인이 만료되었습니다");
+  await expect(page.locator("[data-view]")).not.toContainText("아직 일정이 없습니다");
 });
 
 test("schedule deletion confirms the title and waits for the server", async ({ page }) => {
@@ -439,6 +451,26 @@ test("logout discards a late detail response", async ({ page }) => {
   await expect(page.locator("[data-authenticated]")).toBeHidden();
   await expect(page.locator("dialog")).toHaveCount(0);
   await expect(page.locator("[data-view]")).toBeEmpty();
+});
+
+test("logout discards a late delete response", async ({ page }) => {
+  const state = await mockApi(page);
+  state.schedules = [{ id: "late-delete", title: "첫 계정 일정", start_at: "2099-01-01T09:00:00Z", status: "confirmed" }];
+  let releaseDelete;
+  state.deleteGate = new Promise((resolve) => { releaseDelete = resolve; });
+  await page.goto("/");
+  await login(page);
+  await navigate(page, "schedules");
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.locator("[data-delete-id]").click();
+  await expect(page.locator("[data-delete-id]")).toBeDisabled();
+  const menu = page.locator("button[data-menu-toggle]").first();
+  if (await menu.isVisible()) await menu.click();
+  await page.locator("[data-logout]").click();
+  releaseDelete();
+  await expect(page.locator("[data-authenticated]")).toBeHidden();
+  await expect(page.locator("[data-view]")).toBeEmpty();
+  await expect(page.locator("[data-toast]")).not.toContainText("일정이 삭제되었습니다");
 });
 
 test("schedule period uses an inclusive local end date and keeps dashboard data", async ({ page }) => {
