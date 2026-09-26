@@ -480,6 +480,8 @@ test("AI rate limiting keeps the text and manual creation available", async ({ p
   await expect(form.locator("[role=alert]")).toContainText("사용량 제한");
   await expect(page.locator('[data-view] a[href="#create"]')).toBeVisible();
   expect(state.schedules).toHaveLength(0);
+  await page.locator('[data-view] a[href="#create"]').click();
+  await expect(page.locator("[data-schedule-form]")).toBeVisible();
 });
 
 test("AI upstream failure is distinguished from usage limits", async ({ page }) => {
