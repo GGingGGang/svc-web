@@ -408,7 +408,7 @@ function init() {
           : error.code === "ai_key_invalid"
             ? "개인 AI 키가 올바르지 않습니다. 키를 확인하거나 직접 일정을 만드세요."
           : error.status === 502
-            ? "AI 서비스 또는 키를 사용할 수 없습니다. 키를 확인하거나 직접 일정을 만드세요."
+            ? "AI 추출 서비스를 사용할 수 없습니다. 잠시 후 다시 시도하거나 직접 일정을 만드세요."
             : scheduleFailure(error, "AI 후보를 추출하지 못했습니다.");
       draft.error = withRequestId(error, draft.error);
       draft.keyUnavailable = error.code === "ai_key_unavailable";

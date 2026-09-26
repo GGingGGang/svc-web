@@ -514,6 +514,22 @@ test("invalid private AI key is identified", async ({ page }) => {
   await expect(page.locator('[data-view] a[href="#create"]')).toBeVisible();
 });
 
+test("generic AI extraction failure does not blame the private key", async ({ page }) => {
+  const state = await mockApi(page);
+  state.extractStatus = 502;
+  state.extractErrorCode = "extraction failed";
+  await page.goto("/");
+  await login(page);
+  await navigate(page, "extract");
+  const form = page.locator("[data-extract-form]");
+  await form.locator("[name=text]").fill("Test meeting on June 15 2030 at 3 PM");
+  await form.locator("button[type=submit]").click();
+  await expect(form.locator("[name=text]")).toHaveValue("Test meeting on June 15 2030 at 3 PM");
+  await expect(form.locator("[role=alert]")).toContainText("AI 추출 서비스를 사용할 수 없습니다");
+  await expect(form.locator("[role=alert]")).not.toContainText("키를 확인");
+  await expect(page.locator('[data-view] a[href="#create"]')).toBeVisible();
+});
+
 test("AI input errors stay beside the field and focus the first invalid value", async ({ page }) => {
   const state = await mockApi(page);
   await page.goto("/");
