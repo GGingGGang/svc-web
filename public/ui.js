@@ -405,6 +405,8 @@ function init() {
             ? "AI 공용 키가 설정되지 않았습니다. 개인 키를 입력하거나 직접 일정을 만드세요."
           : error.code === "ai_upstream_unavailable"
             ? "외부 AI 서비스에 문제가 생겼습니다. 원문을 유지한 채 나중에 다시 시도하거나 직접 일정을 만드세요."
+          : error.code === "ai_model_unavailable"
+            ? "AI 모델을 현재 사용할 수 없습니다. 원문을 유지한 채 나중에 다시 시도하거나 직접 일정을 만드세요."
           : error.code === "ai_key_invalid"
             ? "개인 AI 키가 올바르지 않습니다. 키를 확인하거나 직접 일정을 만드세요."
           : error.status === 502

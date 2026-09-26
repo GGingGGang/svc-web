@@ -500,6 +500,22 @@ test("AI upstream failure is distinguished from usage limits", async ({ page }) 
   await expect(page.locator('[data-view] a[href="#create"]')).toBeVisible();
 });
 
+test("unavailable AI model preserves the text and manual entry", async ({ page }) => {
+  const state = await mockApi(page);
+  state.extractStatus = 503;
+  state.extractErrorCode = "ai_model_unavailable";
+  await page.goto("/");
+  await login(page);
+  await navigate(page, "extract");
+  const form = page.locator("[data-extract-form]");
+  await form.locator("[name=text]").fill("Test meeting on June 15 2030 at 3 PM");
+  await form.locator("button[type=submit]").click();
+  await expect(form.locator("[name=text]")).toHaveValue("Test meeting on June 15 2030 at 3 PM");
+  await expect(form.locator("[role=alert]")).toContainText("AI 모델을 현재 사용할 수 없습니다");
+  await page.locator('[data-view] a[href="#create"]').click();
+  await expect(page.locator("[data-schedule-form]")).toBeVisible();
+});
+
 test("invalid private AI key is identified", async ({ page }) => {
   const state = await mockApi(page);
   state.extractStatus = 502;
