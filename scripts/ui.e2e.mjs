@@ -5,7 +5,7 @@ const tokens = { access_token: "test-access", refresh_token: "test-refresh", exp
 
 // No account or schedule is written to a real service by these browser checks.
 async function mockApi(page) {
-  const state = { loginStatus: 200, registerStatus: 201, registerMessage: "Invalid email", refreshStatus: 200, listStatus: 200, requestId: null, serviceStatus: { schedules: "available", followup: "available" }, saveStatus: 201, saveResponseLost: false, createResults: new Map(), failTitle: null, extractStatus: 200, extractErrorCode: "extraction_failed", extractCandidates: [], extractTruncated: false, updateStatus: 200, deleteStatus: 204, deleteGate: null, detailGate: null, detailStatus: 200, reminderStatus: 201, reminderGate: null, reminders: [], schedules: [], calls: [] };
+  const state = { loginStatus: 200, registerStatus: 201, registerMessage: "Invalid email", refreshStatus: 200, listStatus: 200, requestId: null, serviceStatus: { schedules: "available", followup: "available" }, saveStatus: 201, saveResponseLost: false, createResults: new Map(), failTitle: null, extractStatus: 200, extractErrorCode: "extraction_failed", extractCandidates: [], extractGate: null, extractTruncated: false, updateStatus: 200, deleteStatus: 204, deleteGate: null, detailGate: null, detailStatus: 200, reminderStatus: 201, reminderGate: null, reminders: [], schedules: [], calls: [] };
   await page.route("**/*", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -26,7 +26,11 @@ async function mockApi(page) {
     if (url.pathname.endsWith("/register")) return route.fulfill({ status: state.registerStatus, json: state.registerStatus === 201 ? { id: "test-user" } : state.registerStatus === 400 ? { statusCode: 400, error: "Bad Request", message: state.registerMessage } : { error: "email_already_registered" } });
     if (url.pathname.endsWith("/logout")) return route.fulfill({ status: 204 });
     if (url.pathname === "/v1/core/status") return route.fulfill({ status: state.serviceStatus.schedules === "unavailable" ? 503 : 200, json: state.serviceStatus });
-    if (url.pathname === "/v1/core/schedules/extract") return route.fulfill({ status: state.extractStatus, json: state.extractStatus === 200 ? { candidates: state.extractCandidates, truncated: state.extractTruncated } : { error: state.extractErrorCode } });
+    if (url.pathname === "/v1/core/schedules/extract") {
+      const candidates = state.extractCandidates;
+      if (state.extractGate) await state.extractGate;
+      return route.fulfill({ status: state.extractStatus, json: state.extractStatus === 200 ? { candidates, truncated: state.extractTruncated } : { error: state.extractErrorCode } });
+    }
     if (url.pathname.includes("/reminders") && method === "POST") {
       if (state.reminderGate) await state.reminderGate;
       if (state.reminderStatus === 201) state.reminders.push({ id: "test-reminder", ...body });
@@ -541,6 +545,29 @@ test("AI with no events shows zero candidates and creates nothing", async ({ pag
   await expect(page.locator("[data-view]")).toContainText("추출된 일정 후보가 없습니다");
   await expect(page.locator("[data-candidate]")).toHaveCount(0);
   expect(state.calls.filter((call) => call.method === "POST" && call.path === "/v1/core/schedules")).toHaveLength(0);
+});
+
+test("late AI extraction cannot replace a newer draft after navigation", async ({ page }) => {
+  const state = await mockApi(page);
+  let releaseOld;
+  state.extractGate = new Promise((resolve) => { releaseOld = resolve; });
+  state.extractCandidates = [{ title: "Old", start_at: "2030-06-15T05:30:00Z" }];
+  await page.goto("/");
+  await login(page);
+  await navigate(page, "extract");
+  await page.locator("[data-extract-form] [name=text]").fill("Old text");
+  await page.locator("[data-extract-form] button[type=submit]").click();
+  await expect.poll(() => state.calls.filter((call) => call.path.endsWith("/extract")).length).toBe(1);
+  await navigate(page, "schedules");
+  await navigate(page, "extract");
+  state.extractGate = null;
+  state.extractCandidates = [{ title: "New", start_at: "2030-06-16T05:30:00Z" }];
+  await page.locator("[data-extract-form] [name=text]").fill("New text");
+  await page.locator("[data-extract-form] button[type=submit]").click();
+  await expect(page.locator("[data-candidate] [name=title]")).toHaveValue("New");
+  releaseOld();
+  await expect(page.locator("[data-extract-form] [name=text]")).toHaveValue("New text");
+  await expect(page.locator("[data-candidate] [name=title]")).toHaveValue("New");
 });
 
 test("AI reference instant and timezone can be reviewed and changed", async ({ page }) => {
