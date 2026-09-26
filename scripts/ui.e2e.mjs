@@ -516,6 +516,21 @@ test("unavailable AI model preserves the text and manual entry", async ({ page }
   await expect(page.locator("[data-schedule-form]")).toBeVisible();
 });
 
+test("AI server timeout is explained without losing the draft", async ({ page }) => {
+  const state = await mockApi(page);
+  state.extractStatus = 504;
+  state.extractErrorCode = "extraction timed out";
+  await page.goto("/");
+  await login(page);
+  await navigate(page, "extract");
+  const form = page.locator("[data-extract-form]");
+  await form.locator("[name=text]").fill("Test meeting on June 15 2030 at 3 PM");
+  await form.locator("button[type=submit]").click();
+  await expect(form.locator("[name=text]")).toHaveValue("Test meeting on June 15 2030 at 3 PM");
+  await expect(form.locator("[role=alert]")).toContainText("AI 추출 시간이 초과됐습니다");
+  await expect(page.locator('[data-view] a[href="#create"]')).toBeVisible();
+});
+
 test("invalid private AI key is identified", async ({ page }) => {
   const state = await mockApi(page);
   state.extractStatus = 502;
