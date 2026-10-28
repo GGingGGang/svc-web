@@ -1,11 +1,13 @@
 import { defineConfig } from "@playwright/test";
 
+const port = Number(process.env.PLAYWRIGHT_PORT || 5179);
+
 export default defineConfig({
   testDir: "./scripts",
   testMatch: "**/*.e2e.mjs",
   workers: 2,
   use: {
-    baseURL: "http://127.0.0.1:5179",
+    baseURL: `http://127.0.0.1:${port}`,
     channel: process.env.PLAYWRIGHT_CHANNEL || undefined,
     colorScheme: "light",
     screenshot: "only-on-failure",
@@ -17,7 +19,7 @@ export default defineConfig({
   ],
   webServer: {
     command: "node scripts/dev-server.mjs",
-    url: "http://127.0.0.1:5179/readyz",
-    env: { HTTP_HOST: "127.0.0.1", HTTP_PORT: "5179" }
+    url: `http://127.0.0.1:${port}/readyz`,
+    env: { HTTP_HOST: "127.0.0.1", HTTP_PORT: String(port) }
   }
 });

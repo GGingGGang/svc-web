@@ -17,10 +17,15 @@ const escapeHtml = (value = "") =>
 let displayTimezone = getBrowserTimezone();
 const displayZones = [...new Set([getBrowserTimezone(), "UTC", "Asia/Seoul", "America/New_York", "Europe/London"])];
 
+const displayPrefs = (() => {
+  try { return { dateStyle: "short", hourCycle: "12", weekStart: "1", ...JSON.parse(localStorage.getItem("svc-web.display") || "{}") }; }
+  catch { return { dateStyle: "short", hourCycle: "12", weekStart: "1" }; }
+})();
 function scheduleDate(schedule) {
   return new Intl.DateTimeFormat("ko-KR", {
     month: "short",
     day: "numeric",
+    year: displayPrefs.dateStyle === "year" ? "numeric" : undefined,
     timeZone: displayTimezone,
   }).format(new Date(schedule.start_at));
 }
@@ -30,6 +35,7 @@ function scheduleTime(schedule) {
     : new Intl.DateTimeFormat("ko-KR", {
         hour: "numeric",
         minute: "2-digit",
+        hour12: displayPrefs.hourCycle === "12",
         timeZone: displayTimezone,
       }).format(new Date(schedule.start_at));
 }
@@ -82,13 +88,13 @@ function dashboardView(state) {
   const nextDay = new Date(dayStart);
   nextDay.setDate(nextDay.getDate() + 1);
   const weekStart = new Date(dayStart);
-  weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
+  weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() - Number(displayPrefs.weekStart) + 7) % 7));
   const nextWeek = new Date(weekStart);
   nextWeek.setDate(nextWeek.getDate() + 7);
   const active = state.items.filter((item) => item.status !== "cancelled");
   const upcoming = active.filter((item) => new Date(item.start_at) >= now);
   const count = (from, to) => active.filter((item) => { const start = new Date(item.start_at); return start >= from && start < to; }).length;
-  const summary = state.loading || state.error ? "" : `<div class="card form-actions" aria-label="일정 개수"><span>오늘 ${count(dayStart, nextDay)}개</span><span>이번 주 ${count(weekStart, nextWeek)}개</span><span>다가오는 일정 ${upcoming.length}개</span><small>브라우저 시간대 ${escapeHtml(getBrowserTimezone())} · 월요일 시작 · 취소 제외</small></div>`;
+  const summary = state.loading || state.error ? "" : `<div class="card form-actions" aria-label="일정 개수"><span>오늘 ${count(dayStart, nextDay)}개</span><span>이번 주 ${count(weekStart, nextWeek)}개</span><span>다가오는 일정 ${upcoming.length}개</span><small>브라우저 시간대 ${escapeHtml(getBrowserTimezone())} · ${displayPrefs.weekStart === "0" ? "일요일" : "월요일"} 시작 · 취소 제외</small></div>`;
   const body = state.loading
     ? loadingMarkup()
     : state.error
@@ -102,7 +108,7 @@ function schedulesView(state) {
   const shown = state.period ? state.periodItems : state.showPast ? state.items : state.items.filter((item) => new Date(item.start_at) >= new Date());
   const pageCount = Math.max(1, Math.ceil(shown.length / 20));
   const page = Math.min(state.page, pageCount - 1);
-  const rows = shown.slice(page * 20, (page + 1) * 20)
+  const rows = (state.period ? shown : shown.slice(page * 20, (page + 1) * 20))
     .map(
       (item) =>
         `<tr><td><strong>${escapeHtml(item.title)}</strong></td><td>${scheduleDate(item)} ${scheduleTime(item)}</td><td>${escapeHtml(item.location || "-")}</td><td><span class="badge">${escapeHtml(item.status || "confirmed")}</span></td><td><button class="btn btn-secondary" type="button" data-detail-id="${escapeHtml(item.id)}" aria-label="${escapeHtml(item.title)} 일정 상세">상세</button> <button class="btn btn-secondary" type="button" data-edit-id="${escapeHtml(item.id)}" aria-label="${escapeHtml(item.title)} 일정 수정">수정</button> <button class="btn btn-secondary" type="button" data-delete-id="${escapeHtml(item.id)}" aria-label="${escapeHtml(item.title)} 일정 삭제">삭제</button></td></tr>`,
@@ -113,9 +119,9 @@ function schedulesView(state) {
     : state.periodError || state.error
       ? errorMarkup(state.periodError || state.error)
       : shown.length
-        ? `<div class="table-wrap"><table class="schedule-table"><thead><tr><th>제목</th><th>일시</th><th>장소</th><th>상태</th><th>작업</th></tr></thead><tbody>${rows}</tbody></table></div><div class="form-actions"><button class="btn btn-secondary" type="button" data-page="previous" ${page === 0 ? "disabled" : ""}>이전</button><span>${page + 1} / ${pageCount}쪽 · ${shown.length}개</span><button class="btn btn-secondary" type="button" data-page="next" ${page + 1 >= pageCount ? "disabled" : ""}>다음</button></div>`
+      ? `<div class="table-wrap"><table class="schedule-table"><thead><tr><th>제목</th><th>일시</th><th>장소</th><th>상태</th><th>작업</th></tr></thead><tbody>${rows}</tbody></table></div>${state.period ? `<div class="form-actions"><span>${shown.length}개 표시${state.nextCursor ? " · 더 많은 결과가 있습니다." : " · 조회 결과의 끝입니다."}</span>${state.nextCursor ? '<button class="btn btn-secondary" type="button" data-load-more>더 불러오기</button>' : ""}</div>` : `<div class="form-actions"><button class="btn btn-secondary" type="button" data-page="previous" ${page === 0 ? "disabled" : ""}>이전</button><span>${page + 1} / ${pageCount}쪽 · ${shown.length}개</span><button class="btn btn-secondary" type="button" data-page="next" ${page + 1 >= pageCount ? "disabled" : ""}>다음</button></div>`}`
         : emptyMarkup();
-  return `<div class="page-heading"><div><h1>모든 일정</h1><p>${state.period ? "선택 기간" : state.showPast ? "과거 일정 포함" : "현재 이후 일정"} · 시작 시각순</p></div><a class="btn btn-primary" href="#create">${icon("M12 5v14M5 12h14")}일정 만들기</a></div><section class="card"><label class="field"><span>표시 시간대</span><select class="select" data-display-timezone>${displayZones.map((zone) => `<option value="${escapeHtml(zone)}" ${zone === displayTimezone ? "selected" : ""}>${escapeHtml(zone)}</option>`).join("")}</select></label><form data-period-form class="form-actions"><label class="field"><span>시작 날짜 (브라우저 시간대)</span><input class="input" name="from" type="date" value="${escapeHtml(state.period?.from || "")}"></label><label class="field"><span>종료 날짜 (브라우저 시간대)</span><input class="input" name="to" type="date" value="${escapeHtml(state.period?.to || "")}"></label><button class="btn btn-secondary" type="submit">기간 조회</button><button class="btn btn-secondary" type="button" data-clear-period>기간 초기화</button></form><button class="btn btn-secondary" type="button" data-toggle-past>${state.showPast ? "다가오는 일정만" : "과거 일정도 보기"}</button> <button class="btn btn-secondary" type="button" data-refresh-list>새로고침</button>${body}</section>`;
+  return `<div class="page-heading"><div><h1>모든 일정</h1><p>${state.period ? "선택 기간" : state.showPast ? "과거 일정 포함" : "현재 이후 일정"} · 시작 시각순</p></div><a class="btn btn-primary" href="#create">${icon("M12 5v14M5 12h14")}일정 만들기</a></div><section class="card"><label class="field"><span>표시 시간대</span><select class="select" data-display-timezone>${displayZones.map((zone) => `<option value="${escapeHtml(zone)}" ${zone === displayTimezone ? "selected" : ""}>${escapeHtml(zone)}</option>`).join("")}</select></label><form data-period-form class="form-actions"><label class="field"><span>시작 날짜 (브라우저 시간대)</span><input class="input" name="from" type="date" value="${escapeHtml(state.period?.from || "")}"></label><label class="field"><span>종료 날짜 (브라우저 시간대)</span><input class="input" name="to" type="date" value="${escapeHtml(state.period?.to || "")}"></label><label class="field"><span>제목·장소 검색</span><input class="input" name="q" value="${escapeHtml(state.period?.q || "")}" maxlength="255"></label><label class="field"><span>상태</span><select class="select" name="status"><option value="">모든 상태</option><option value="confirmed" ${state.period?.status === "confirmed" ? "selected" : ""}>확정</option><option value="tentative" ${state.period?.status === "tentative" ? "selected" : ""}>미정</option><option value="cancelled" ${state.period?.status === "cancelled" ? "selected" : ""}>취소</option></select></label><button class="btn btn-secondary" type="submit">기간 조회</button><button class="btn btn-secondary" type="button" data-clear-period>기간 초기화</button></form><button class="btn btn-secondary" type="button" data-toggle-past>${state.showPast ? "다가오는 일정만" : "과거 일정도 보기"}</button> <button class="btn btn-secondary" type="button" data-refresh-list>새로고침</button>${body}</section>`;
 }
 function createView(draft = {}, editing = false) {
   const now =
@@ -162,6 +168,12 @@ function extractView(state) {
     ${draft.candidates.length ? `<form data-candidates-form novalidate><p>후보를 확인·수정하고 저장할 것만 선택하세요. 추출만으로는 저장되지 않습니다.${draft.truncated ? " 일부만 추출됐습니다. 원문을 나눠 다시 추출하세요." : ""}</p>${draft.candidates.map(candidateView).join("")}<div class="form-actions"><button type="submit" class="btn btn-primary" ${draft.saving || draft.candidates.every((item) => item.saved) ? "disabled" : ""}>${draft.saving ? "저장 중…" : "선택한 후보 저장"}</button></div></form>` : draft.extracted ? "<p>추출된 일정 후보가 없습니다. 원문을 바꿔 다시 시도하거나 직접 일정을 만드세요.</p>" : ""}`;
 }
 
+function settingsView(state) {
+  const account = state.account || {};
+  const sessions = state.sessionsLoading ? loadingMarkup() : state.sessionsError ? `<p class="alert error" role="alert">${escapeHtml(state.sessionsError)}</p>` : `<ul class="schedule-list">${state.sessions.map((session) => `<li class="schedule-item"><div><strong>로그인 세션</strong><p>시작 ${escapeHtml(new Date(session.created_at).toLocaleString("ko-KR"))}<br>최근 활동 ${escapeHtml(new Date(session.last_active_at).toLocaleString("ko-KR"))}</p></div><button class="btn btn-secondary" type="button" data-revoke-session="${escapeHtml(session.family_id)}">세션 종료</button></li>`).join("") || "<li>활성 세션이 없습니다.</li>"}</ul>`;
+  return `<div class="page-heading"><div><h1>설정</h1><p>표시 설정은 이 브라우저에 저장되며 일정의 실제 시각은 바뀌지 않습니다.</p></div></div><section class="card form-card"><h2>계정 정보</h2><form data-account-form><div class="form-grid"><label class="field"><span>이메일</span><input class="input" value="${escapeHtml(account.email || "")}" disabled></label><label class="field"><span>이름</span><input class="input" name="display_name" maxlength="100" required value="${escapeHtml(account.display_name || "")}"></label><label class="field"><span>시간대</span><input class="input" name="timezone" maxlength="64" required value="${escapeHtml(account.timezone || getBrowserTimezone())}"></label></div><div class="form-actions"><button class="btn btn-primary" type="submit">계정 정보 저장</button></div></form><form data-password-form><h3>비밀번호 변경</h3><div class="form-grid"><label class="field"><span>현재 비밀번호</span><input class="input" type="password" name="current_password" autocomplete="current-password" required></label><label class="field"><span>새 비밀번호</span><input class="input" type="password" name="new_password" autocomplete="new-password" minlength="12" maxlength="128" required></label></div><div class="form-actions"><button class="btn btn-secondary" type="submit">비밀번호 변경</button></div></form></section><section class="card form-card"><h2>일정 표시</h2><div class="form-grid"><label class="field"><span>날짜 표시</span><select class="select" data-pref="dateStyle"><option value="short" ${displayPrefs.dateStyle === "short" ? "selected" : ""}>월·일</option><option value="year" ${displayPrefs.dateStyle === "year" ? "selected" : ""}>년·월·일</option></select></label><label class="field"><span>시간 표시</span><select class="select" data-pref="hourCycle"><option value="24" ${displayPrefs.hourCycle === "24" ? "selected" : ""}>24시간제</option><option value="12" ${displayPrefs.hourCycle === "12" ? "selected" : ""}>12시간제</option></select></label><label class="field"><span>주 시작 요일</span><select class="select" data-pref="weekStart"><option value="1" ${displayPrefs.weekStart === "1" ? "selected" : ""}>월요일</option><option value="0" ${displayPrefs.weekStart === "0" ? "selected" : ""}>일요일</option></select></label></div></section><section class="card form-card"><h2>로그인 세션</h2><p>세션 종료는 이 세션의 토큰 갱신을 막습니다. 이미 발급된 접근 토큰은 최대 1시간 더 유효할 수 있습니다.</p><button class="btn btn-secondary" type="button" data-refresh-sessions>세션 새로고침</button>${sessions}</section>`;
+}
+
 function init() {
   const config = readConfig();
   const auth = new AuthClient({ config });
@@ -171,16 +183,18 @@ function init() {
   const serviceStatus = document.querySelector("[data-service-status]");
   const view = document.querySelector("[data-view]");
   const toast = document.querySelector("[data-toast]");
-  const state = { items: [], loading: false, error: "", showPast: false, page: 0, period: null, periodItems: [], periodLoading: false, periodError: "", draft: {}, editDraft: {}, editingId: null, editKey: null, editKeyAt: 0, editFingerprint: null, deleteKeys: new Map(), createKey: null, createKeyAt: 0, createFingerprint: null,
+  const state = { items: [], loading: false, error: "", showPast: false, page: 0, period: null, periodItems: [], periodLoading: false, periodError: "", draft: {}, editDraft: {}, editingId: null, editKey: null, editKeyAt: 0, editFingerprint: null, deleteKeys: new Map(), createKey: null, createKeyAt: 0, createFingerprint: null, formDirty: false, formBaseline: "", formRoute: "", lastHash: location.hash, sessions: [], sessionsLoading: false, sessionsError: "", account: null,
     extract: { text: "", now: localDateTime(new Date()), timezone: getBrowserTimezone(), key: "", keyUnavailable: false, candidates: [], error: "", busy: false, saving: false, extracted: false, truncated: false, generation: 0 } };
   const titles = {
     extract: ["AI", "일정 추출"],
+    settings: ["ACCOUNT", "설정"],
     dashboard: ["WORKSPACE", "개요"],
     schedules: ["SCHEDULES", "모든 일정"],
     create: ["SCHEDULES", "일정 만들기"],
     edit: ["SCHEDULES", "일정 수정"],
   };
   let toastTimer;
+  let suppressHashChange = false;
   const currentRoute = () =>
     titles[location.hash.slice(1)] ? location.hash.slice(1) : "dashboard";
   const setBusy = (form, busy, label) => {
@@ -313,11 +327,19 @@ function init() {
     view.innerHTML =
       route === "extract"
         ? extractView(state)
+        : route === "settings"
+          ? settingsView(state)
         : route === "schedules"
         ? schedulesView(state)
         : route === "create" || route === "edit"
           ? createView(route === "edit" ? state.editDraft : state.draft, route === "edit")
           : dashboardView(state);
+    const currentForm = view.querySelector("[data-schedule-form]");
+    if (currentForm && state.formRoute !== route) {
+      state.formRoute = route;
+      state.formBaseline = JSON.stringify({ ...Object.fromEntries(new FormData(currentForm)), all_day: currentForm.elements.all_day.checked });
+      state.formDirty = false;
+    }
     view
       .querySelector("[data-reload]")
       ?.addEventListener("click", loadSchedules);
@@ -326,7 +348,8 @@ function init() {
     view.querySelector("[data-refresh-list]")?.addEventListener("click", loadSchedules);
     view.querySelectorAll("[data-page]").forEach((button) => button.addEventListener("click", () => { state.page += button.dataset.page === "next" ? 1 : -1; render(); }));
     view.querySelector("[data-period-form]")?.addEventListener("submit", selectPeriod);
-    view.querySelector("[data-clear-period]")?.addEventListener("click", () => { state.period = null; state.periodItems = []; state.periodError = ""; state.page = 0; render(); });
+    view.querySelector("[data-load-more]")?.addEventListener("click", () => loadPeriod(true));
+    view.querySelector("[data-clear-period]")?.addEventListener("click", () => { state.period = null; state.periodItems = []; state.nextCursor = null; state.periodError = ""; state.page = 0; render(); });
     view.querySelectorAll("[data-detail-id]").forEach((button) => button.addEventListener("click", showDetail));
     view
       .querySelector("[data-schedule-form]")
@@ -348,6 +371,32 @@ function init() {
     view.querySelectorAll("[data-edit-id]").forEach((button) =>
       button.addEventListener("click", editSchedule),
     );
+    view.querySelectorAll("[data-pref]").forEach((select) => select.addEventListener("change", () => {
+      displayPrefs[select.dataset.pref] = select.value;
+      localStorage.setItem("svc-web.display", JSON.stringify(displayPrefs));
+      render();
+      notify("표시 설정을 저장했습니다.");
+    }));
+    view.querySelector("[data-refresh-sessions]")?.addEventListener("click", loadSessions);
+    view.querySelector("[data-account-form]")?.addEventListener("submit", saveAccount);
+    view.querySelector("[data-password-form]")?.addEventListener("submit", changePassword);
+    view.querySelectorAll("[data-revoke-session]").forEach((button) => button.addEventListener("click", async () => {
+      const sessionVersion = auth.sessionVersion;
+      if (!confirm("이 세션의 로그인을 종료할까요? 이미 발급된 접근 토큰은 만료 전까지 유효할 수 있습니다.")) return;
+      button.disabled = true;
+      try { await auth.deleteSession(button.dataset.revokeSession); if (sessionVersion !== auth.sessionVersion || application.hidden) return; if (currentRoute() === "settings") { notify("세션의 갱신 권한을 종료했습니다."); await loadSessions(); } }
+      catch (error) { if (sessionVersion !== auth.sessionVersion || application.hidden) return; button.disabled = false; notify(error.message, true); }
+    }));
+    const scheduleForm = view.querySelector("[data-schedule-form]");
+    const rememberScheduleDraft = () => {
+      const values = Object.fromEntries(new FormData(scheduleForm));
+      values.all_day = scheduleForm.elements.all_day.checked;
+      state.formDirty = JSON.stringify(values) !== state.formBaseline;
+      if (currentRoute() === "edit") state.editDraft = values;
+      else state.draft = values;
+    };
+    scheduleForm?.addEventListener("input", rememberScheduleDraft);
+    scheduleForm?.addEventListener("change", rememberScheduleDraft);
   };
   let extractController;
   const extractSchedules = async (event) => {
@@ -500,6 +549,8 @@ function init() {
   const clearPrivateState = () => {
     detailDialog?.close();
     state.items = [];
+    state.account = null;
+    state.sessions = [];
     displayTimezone = getBrowserTimezone();
     state.period = null;
     state.periodItems = [];
@@ -598,7 +649,7 @@ function init() {
     dialog.addEventListener("close", () => { dialog.remove(); if (detailDialog === dialog) detailDialog = null; if (!application.hidden && trigger.isConnected) trigger.focus(); });
     dialog.showModal();
   };
-  const loadPeriod = async () => {
+  const loadPeriod = async (append = false) => {
     const period = state.period;
     if (!period) return;
     const sessionVersion = auth.sessionVersion;
@@ -608,9 +659,10 @@ function init() {
     try {
       const end = new Date(`${period.to}T00:00:00`);
       end.setDate(end.getDate() + 1);
-      const items = await schedules.list({ from: new Date(`${period.from}T00:00:00`).toISOString(), to: end.toISOString() });
+      const result = await schedules.listPage({ from: new Date(`${period.from}T00:00:00`).toISOString(), to: end.toISOString(), status: period.status, q: period.q, limit: 20, cursor: append ? state.nextCursor : undefined });
       if (auth.sessionVersion !== sessionVersion || state.period !== period || application.hidden) return;
-      state.periodItems = items;
+      state.periodItems = append ? [...state.periodItems, ...result.schedules] : result.schedules;
+      state.nextCursor = result.nextCursor;
     } catch (error) {
       if (auth.sessionVersion !== sessionVersion || state.period !== period || application.hidden) return;
       state.periodError = scheduleFailure(error, "선택 기간의 일정을 불러오지 못했습니다.");
@@ -625,7 +677,7 @@ function init() {
     const form = event.currentTarget;
     const from = form.elements.from.value;
     const to = form.elements.to.value;
-    const days = (new Date(`${to}T00:00:00`) - new Date(`${from}T00:00:00`)) / 86400000;
+    const days = (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000;
     if (!from || !to || !Number.isFinite(days) || days < 0 || days >= 366) {
       const input = !from ? form.elements.from : form.elements.to;
       input.setCustomValidity("시작·종료 날짜를 366일 이내로 선택하세요.");
@@ -634,8 +686,9 @@ function init() {
       input.addEventListener("input", () => input.setCustomValidity(""), { once: true });
       return;
     }
-    state.period = { from, to };
+    state.period = { from, to, q: form.elements.q.value.trim(), status: form.elements.status.value };
     state.periodItems = [];
+    state.nextCursor = null;
     state.page = 0;
     loadPeriod();
   };
@@ -659,6 +712,56 @@ function init() {
       if (state.period) await loadPeriod();
     }
   };
+  const loadSessions = async () => {
+    const sessionVersion = auth.sessionVersion;
+    state.sessionsLoading = true;
+    state.sessionsError = "";
+    render();
+    try {
+      const payload = await auth.listSessions();
+      if (sessionVersion !== auth.sessionVersion || application.hidden) return;
+      state.sessions = Array.isArray(payload?.sessions) ? payload.sessions : [];
+    } catch (error) { if (sessionVersion === auth.sessionVersion && !application.hidden) state.sessionsError = error.message; }
+    finally { state.sessionsLoading = false; if (sessionVersion === auth.sessionVersion && !application.hidden && currentRoute() === "settings") render(); }
+  };
+  const loadAccount = async () => {
+    const sessionVersion = auth.sessionVersion;
+    try { const account = await auth.getAccount(); if (sessionVersion === auth.sessionVersion && !application.hidden) state.account = account; }
+    catch (error) { if (sessionVersion === auth.sessionVersion && !application.hidden) { state.account = null; notify(error.message, true); } }
+    finally { if (sessionVersion === auth.sessionVersion && !application.hidden && currentRoute() === "settings") render(); }
+  };
+  const saveAccount = async (event) => {
+    event.preventDefault();
+    const sessionVersion = auth.sessionVersion;
+    const form = event.currentTarget;
+    const display_name = form.elements.display_name.value.trim();
+    const timezone = form.elements.timezone.value.trim();
+    if (!display_name || [...display_name].length > 100 || !timezone || [...timezone].length > 64) return notify("이름과 시간대를 확인하세요.", true);
+    try { new Intl.DateTimeFormat("en", { timeZone: timezone }); }
+    catch { form.elements.timezone.focus(); return notify("올바른 IANA 시간대를 입력하세요.", true); }
+    setBusy(form, true, "저장 중…");
+    try { const account = await auth.updateAccount({ display_name, timezone }); if (sessionVersion !== auth.sessionVersion || application.hidden) return; state.account = account; notify("계정 정보를 저장했습니다."); render(); }
+    catch (error) { if (sessionVersion !== auth.sessionVersion || application.hidden) return; setBusy(form, false); notify(error.message, true); }
+  };
+  const changePassword = async (event) => {
+    event.preventDefault();
+    const sessionVersion = auth.sessionVersion;
+    const form = event.currentTarget;
+    const current_password = form.elements.current_password.value;
+    const new_password = form.elements.new_password.value;
+    if ([...new_password].length < 12 || [...new_password].length > 128) return notify("새 비밀번호는 12~128자여야 합니다.", true);
+    setBusy(form, true, "변경 중…");
+    try {
+      await auth.changePassword({ current_password, new_password });
+      if (sessionVersion !== auth.sessionVersion || application.hidden) return;
+      auth.clear();
+      clearPrivateState();
+      application.hidden = true;
+      anonymous.hidden = false;
+      setMode("login");
+      feedback("비밀번호를 변경했습니다. 보안을 위해 다시 로그인하세요.");
+    } catch (error) { if (sessionVersion !== auth.sessionVersion || application.hidden) return; setBusy(form, false); notify(error.status === 401 ? "현재 비밀번호를 확인하세요." : error.status === 400 ? "새 비밀번호 정책을 확인하세요." : error.message, true); }
+  };
   const openApp = async (restore = false) => {
     if (restore) {
       try {
@@ -676,12 +779,14 @@ function init() {
     closeMenu();
     if (!location.hash) location.hash = "#dashboard";
     await loadSchedules();
+    if (currentRoute() === "settings") { await Promise.all([loadSessions(), loadAccount()]); }
   };
   const editSchedule = (event) => {
     const item = state.items.find((schedule) => schedule.id === event.currentTarget.dataset.editId);
     if (!item) return;
     if (state.editingId !== item.id) { state.editKey = null; state.editFingerprint = null; }
     state.editingId = item.id;
+    state.formDirty = false;
     state.editDraft = { ...item, start_at: localDateTime(item.start_at), end_at: item.end_at ? localDateTime(item.end_at) : "" };
     location.hash = "#edit";
     render();
@@ -760,6 +865,7 @@ function init() {
         state.createFingerprint = null;
       }
       notify("일정이 저장되었습니다.");
+      state.formDirty = false;
       location.hash = "#schedules";
       await loadSchedules();
     } catch (error) {
@@ -922,6 +1028,19 @@ function init() {
       }
     });
   window.addEventListener("hashchange", () => {
+    if (suppressHashChange) { suppressHashChange = false; render(); return; }
+    if (state.formDirty && !confirm("저장하지 않은 변경 사항이 있습니다. 이 화면을 나가시겠습니까?")) {
+      suppressHashChange = true;
+      location.hash = state.lastHash;
+      return;
+    }
+    if (state.formDirty) {
+      state.formDirty = false;
+      if (state.formRoute === "create") { state.draft = {}; state.createKey = null; state.createFingerprint = null; }
+      if (state.formRoute === "edit") { state.editDraft = {}; state.editingId = null; state.editKey = null; state.editFingerprint = null; }
+    }
+    state.formRoute = "";
+    state.lastHash = location.hash;
     if (currentRoute() !== "extract") {
       extractController?.abort();
       state.extract.generation++;
@@ -929,6 +1048,12 @@ function init() {
       state.extract.key = "";
     }
     render();
+    if (currentRoute() === "settings") { loadSessions(); loadAccount(); }
+  });
+  window.addEventListener("beforeunload", (event) => {
+    if (!state.formDirty) return;
+    event.preventDefault();
+    event.returnValue = "";
   });
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape") closeMenu();

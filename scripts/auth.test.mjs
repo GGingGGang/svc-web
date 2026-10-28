@@ -49,6 +49,23 @@ test("login saves the access and refresh pair in session storage", async () => {
   assert.equal(client.hasSession(), true);
 });
 
+test("session management uses bearer authentication and encodes family IDs", async () => {
+  const calls = [];
+  const client = new AuthClient({ storage: storage(), fetchImpl: async (url, options) => {
+    calls.push({ url, options });
+    if (url.endsWith("/login")) return tokenResponse();
+    return options.method === "DELETE" ? new Response(null, { status: 204 }) : Response.json({ sessions: [] });
+  } });
+  await client.login({ email: "user@example.com", password: "secret" });
+  await client.listSessions();
+  await client.deleteSession("family/id");
+  assert.equal(calls[1].url, "https://api.ggang.cloud/v1/auth/sessions");
+  assert.equal(calls[1].options.headers.Authorization, "Bearer access-1");
+  assert.equal(calls[1].options.method, "GET");
+  assert.equal(calls[2].url, "https://api.ggang.cloud/v1/auth/sessions/family%2Fid");
+  assert.equal(calls[2].options.method, "DELETE");
+});
+
 test("refresh rotates the stored pair and clears an invalid session", async () => {
   const session = storage();
   const client = new AuthClient({ config: readConfig(), storage: session, fetchImpl: async () => tokenResponse("access-2", "refresh-2") });
@@ -133,6 +150,23 @@ test("schedule client follows the core schedule contract with bearer auth", asyn
   assert.deepEqual(await schedules.list({ status: "confirmed" }), []);
   assert.equal(calls[0].url, "https://api.ggang.cloud/v1/core/schedules?status=confirmed");
   assert.equal(calls[0].options.headers.Authorization, "Bearer access-1");
+});
+
+test("schedule pages send bounded filters and return the opaque next cursor", async () => {
+  let request;
+  const client = new ScheduleClient({ authClient: { getAccessToken: () => "access-page" }, fetchImpl: async (url, options) => {
+    request = { url, options };
+    return Response.json({ schedules: [{ id: "one" }], next_cursor: "cursor/next" });
+  } });
+  const result = await client.listPage({ from: "2030-01-01T00:00:00Z", to: "2030-02-01T00:00:00Z", status: "confirmed", q: "team", limit: 20 });
+  assert.deepEqual(result, { schedules: [{ id: "one" }], nextCursor: "cursor/next" });
+  const url = new URL(request.url);
+  assert.equal(url.searchParams.get("limit"), "20");
+  assert.equal(url.searchParams.get("q"), "team");
+  assert.equal(url.searchParams.get("status"), "confirmed");
+  assert.equal(request.options.headers.Authorization, "Bearer access-page");
+  await client.listPage({ from: "2030-01-01T00:00:00Z", to: "2030-02-01T00:00:00Z", limit: 20, cursor: "cursor/next" });
+  assert.equal(new URL(request.url).searchParams.get("cursor"), "cursor/next");
 });
 
 test("schedule delete waits for a 204 response and reports failure", async () => {

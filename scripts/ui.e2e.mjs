@@ -5,11 +5,11 @@ const tokens = { access_token: "test-access", refresh_token: "test-refresh", exp
 
 // No account or schedule is written to a real service by these browser checks.
 async function mockApi(page) {
-  const state = { loginStatus: 200, registerStatus: 201, registerMessage: "Invalid email", refreshStatus: 200, listStatus: 200, requestId: null, serviceStatus: { schedules: "available", followup: "available" }, saveStatus: 201, saveResponseLost: false, createResults: new Map(), failTitle: null, extractStatus: 200, extractErrorCode: "extraction_failed", extractCandidates: [], extractGate: null, extractTruncated: false, updateStatus: 200, deleteStatus: 204, deleteGate: null, detailGate: null, detailStatus: 200, reminderStatus: 201, reminderGate: null, reminders: [], schedules: [], calls: [] };
+  const state = { loginStatus: 200, registerStatus: 201, registerMessage: "Invalid email", refreshStatus: 200, listStatus: 200, requestId: null, serviceStatus: { schedules: "available", followup: "available" }, saveStatus: 201, saveResponseLost: false, createResults: new Map(), failTitle: null, extractStatus: 200, extractErrorCode: "extraction_failed", extractCandidates: [], extractGate: null, extractTruncated: false, updateStatus: 200, deleteStatus: 204, deleteGate: null, detailGate: null, detailStatus: 200, reminderStatus: 201, reminderGate: null, accountPatchGate: null, passwordChangeGate: null, sessionDeleteGate: null, reminders: [], sessions: [{ family_id: "session-a", created_at: "2026-01-01T00:00:00Z", last_active_at: "2026-01-02T00:00:00Z" }], account: { id: "test-user", email: "browser@example.test", display_name: "Test User", timezone: "Asia/Seoul" }, schedules: [], calls: [] };
   await page.route("**/*", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
-    if (url.origin === "http://127.0.0.1:5179") {
+    if (url.hostname === "127.0.0.1" && url.pathname.startsWith("/")) {
       if (url.pathname !== "/runtime-config.js") return route.continue();
       return route.fulfill({ contentType: "text/javascript", body: `window.appConfig = ${JSON.stringify({
         version: "browser-test",
@@ -21,10 +21,18 @@ async function mockApi(page) {
     const method = request.method();
     const body = request.postDataJSON();
     state.calls.push({ path: url.pathname, method, body, headers: request.headers(), query: url.search });
-    if (url.pathname.endsWith("/login")) return route.fulfill({ status: state.loginStatus, json: state.loginStatus === 200 ? tokens : { error: "invalid_credentials" } });
+    if (url.pathname.endsWith("/login")) {
+      if (state.loginStatus === 200) state.account = body.email === "second@example.test" ? { id: "user-b", email: body.email, display_name: "User B", timezone: "UTC" } : { id: "test-user", email: body.email, display_name: "Test User", timezone: "Asia/Seoul" };
+      return route.fulfill({ status: state.loginStatus, json: state.loginStatus === 200 ? tokens : { error: "invalid_credentials" } });
+    }
     if (url.pathname.endsWith("/refresh")) return route.fulfill({ status: state.refreshStatus, json: state.refreshStatus === 200 ? tokens : { error: "invalid_refresh_token" } });
     if (url.pathname.endsWith("/register")) return route.fulfill({ status: state.registerStatus, json: state.registerStatus === 201 ? { id: "test-user" } : state.registerStatus === 400 ? { statusCode: 400, error: "Bad Request", message: state.registerMessage } : { error: "email_already_registered" } });
+    if (url.pathname === "/v1/auth/account" && method === "GET") return route.fulfill({ status: 200, json: state.account });
+    if (url.pathname === "/v1/auth/account" && method === "PATCH") { const original = { ...state.account }; if (state.accountPatchGate) await state.accountPatchGate; const updated = { ...original, ...body }; if (state.account.id === original.id) state.account = updated; return route.fulfill({ status: 200, json: updated }); }
+    if (url.pathname === "/v1/auth/password/change" && method === "POST") { if (state.passwordChangeGate) await state.passwordChangeGate; return route.fulfill({ status: 204 }); }
     if (url.pathname.endsWith("/logout")) return route.fulfill({ status: 204 });
+    if (url.pathname === "/v1/auth/sessions" && method === "GET") return route.fulfill({ status: 200, json: { sessions: state.sessions } });
+    if (url.pathname.startsWith("/v1/auth/sessions/") && method === "DELETE") { if (state.sessionDeleteGate) await state.sessionDeleteGate; state.sessions = state.sessions.filter((session) => session.family_id !== decodeURIComponent(url.pathname.split("/").at(-1))); return route.fulfill({ status: 204 }); }
     if (url.pathname === "/v1/core/status") return route.fulfill({ status: state.serviceStatus.schedules === "unavailable" ? 503 : 200, json: state.serviceStatus });
     if (url.pathname === "/v1/core/schedules/extract") {
       const candidates = state.extractCandidates;
@@ -37,7 +45,21 @@ async function mockApi(page) {
       return route.fulfill({ status: state.reminderStatus, json: state.reminderStatus === 201 ? { id: "test-reminder" } : { error: "inaccessible" } });
     }
     if (url.pathname === "/v1/core/schedules") {
-      if (method === "GET") return state.listStatus === 0 ? route.abort("failed") : route.fulfill({ status: state.listStatus, headers: state.requestId ? { "X-Request-ID": state.requestId, "Access-Control-Expose-Headers": "X-Request-ID" } : {}, json: { schedules: state.schedules } });
+      if (method === "GET") {
+        if (state.listStatus === 0) return route.abort("failed");
+        const params = url.searchParams;
+        if (params.has("limit")) {
+          const from = Date.parse(params.get("from"));
+          const to = Date.parse(params.get("to"));
+          const filtered = state.schedules.filter((item) => Date.parse(item.start_at) >= from && Date.parse(item.start_at) < to && (!params.has("status") || item.status === params.get("status")) && (!params.has("q") || `${item.title} ${item.location || ""}`.toLocaleLowerCase().includes(params.get("q").toLocaleLowerCase())));
+          const offset = Number(params.get("cursor") || 0);
+          const limit = Number(params.get("limit"));
+          const schedules = filtered.slice(offset, offset + limit);
+          const next_cursor = offset + schedules.length < filtered.length ? String(offset + schedules.length) : null;
+          return route.fulfill({ status: state.listStatus, json: { schedules, next_cursor } });
+        }
+        return route.fulfill({ status: state.listStatus, headers: state.requestId ? { "X-Request-ID": state.requestId, "Access-Control-Expose-Headers": "X-Request-ID" } : {}, json: { schedules: state.schedules } });
+      }
       if (method === "POST") {
         if (state.saveStatus !== 201 || body.title === state.failTitle) return route.fulfill({ status: state.saveStatus !== 201 ? state.saveStatus : 503, json: { error: "unavailable" } });
         const key = request.headers()["idempotency-key"];
@@ -73,9 +95,9 @@ async function mockApi(page) {
   return state;
 }
 
-async function login(page) {
+async function login(page, email = "browser@example.test") {
   const form = page.locator("[data-login-form]");
-  await form.locator("[name=email]").fill("browser@example.test");
+  await form.locator("[name=email]").fill(email);
   await form.locator("[name=password]").fill("Test-password-123!");
   await form.locator("button[type=submit]").click();
 }
@@ -413,6 +435,107 @@ test("theme persists and mobile navigation closes on Escape and selection", asyn
   }
   await noPageOverflow(page);
   await page.screenshot({ path: testInfo.outputPath("dashboard-dark.png"), fullPage: true, animations: "disabled" });
+});
+
+test("display preferences persist and session controls call auth session APIs", async ({ page }) => {
+  const state = await mockApi(page);
+  await page.goto("/");
+  await login(page);
+  await navigate(page, "settings");
+  await expect(page.locator("[data-revoke-session]")).toHaveCount(1);
+  await page.locator('[data-pref="dateStyle"]').selectOption("year");
+  await page.locator('[data-pref="hourCycle"]').selectOption("12");
+  await page.locator('[data-pref="weekStart"]').selectOption("0");
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("svc-web.display")))).toEqual({ dateStyle: "year", hourCycle: "12", weekStart: "0" });
+  expect(state.calls.some((call) => call.path === "/v1/auth/sessions" && call.method === "GET" && call.headers.authorization === "Bearer test-access")).toBe(true);
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.locator("[data-revoke-session]").click();
+  await expect(page.locator("[data-revoke-session]")).toHaveCount(0);
+  expect(state.calls.some((call) => call.path.endsWith("/sessions/session-a") && call.method === "DELETE")).toBe(true);
+  await page.reload();
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("svc-web.display")))).toEqual({ dateStyle: "year", hourCycle: "12", weekStart: "0" });
+});
+
+test("account edits use the auth API and password changes require a fresh login", async ({ page }) => {
+  const state = await mockApi(page);
+  await page.goto("/");
+  await login(page);
+  await navigate(page, "settings");
+  const accountForm = page.locator("[data-account-form]");
+  await accountForm.locator('[name="display_name"]').fill("새 이름");
+  await accountForm.locator("button[type=submit]").click();
+  await expect.poll(() => state.account.display_name).toBe("새 이름");
+  expect(state.calls.some((call) => call.path === "/v1/auth/account" && call.method === "PATCH" && call.body.display_name === "새 이름")).toBe(true);
+  const passwordForm = page.locator("[data-password-form]");
+  await passwordForm.locator('[name="current_password"]').fill("Current-password-123!");
+  await passwordForm.locator('[name="new_password"]').fill("New-password-123!");
+  await passwordForm.locator("button[type=submit]").click();
+  await expect(page.locator("[data-auth-anonymous]")).toBeVisible();
+  await expect(page.locator("[data-auth-message]")).toContainText("다시 로그인");
+  expect(state.calls.some((call) => call.path === "/v1/auth/password/change" && call.method === "POST")).toBe(true);
+});
+
+test("late account, password, and session responses cannot overwrite a later login", async ({ page }) => {
+  const state = await mockApi(page);
+  const gate = () => { let release; const promise = new Promise((resolve) => { release = resolve; }); return { promise, release }; };
+  const logoutCurrent = async () => { const button = page.locator("[data-logout]"); if (!(await button.isVisible())) await page.locator("button[data-menu-toggle]").first().click(); await button.click(); };
+  await page.goto("/");
+  await login(page);
+  await navigate(page, "settings");
+
+  const accountGate = gate(); state.accountPatchGate = accountGate.promise;
+  const accountForm = page.locator("[data-account-form]");
+  await accountForm.locator('[name="display_name"]').fill("A의 늦은 응답");
+  await accountForm.locator("button[type=submit]").click();
+  await expect.poll(() => state.calls.some((call) => call.path === "/v1/auth/account" && call.method === "PATCH")).toBe(true);
+  await logoutCurrent();
+  await expect(page.locator("[data-auth-anonymous]")).toBeVisible();
+  await login(page, "second@example.test");
+  await navigate(page, "settings");
+  await expect(page.locator('[data-account-form] [name="display_name"]')).toHaveValue("User B");
+  accountGate.release();
+  await page.waitForTimeout(50);
+  await expect(page.locator('[data-account-form] [name="display_name"]')).toHaveValue("User B");
+
+  const passwordGate = gate(); state.passwordChangeGate = passwordGate.promise;
+  const passwordForm = page.locator("[data-password-form]");
+  await passwordForm.locator('[name="current_password"]').fill("Current-password-123!");
+  await passwordForm.locator('[name="new_password"]').fill("New-password-123!");
+  await passwordForm.locator("button[type=submit]").click();
+  await expect.poll(() => state.calls.some((call) => call.path === "/v1/auth/password/change")).toBe(true);
+  await logoutCurrent();
+  await expect(page.locator("[data-auth-anonymous]")).toBeVisible();
+  await login(page);
+  passwordGate.release();
+  await page.waitForTimeout(50);
+  await expect(page.locator("[data-authenticated]")).toBeVisible();
+
+  const sessionGate = gate(); state.sessionDeleteGate = sessionGate.promise;
+  await navigate(page, "settings");
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.locator("[data-revoke-session]").click();
+  await expect.poll(() => state.calls.some((call) => call.path.endsWith("/sessions/session-a") && call.method === "DELETE")).toBe(true);
+  await logoutCurrent();
+  await expect(page.locator("[data-auth-anonymous]")).toBeVisible();
+  await login(page, "second@example.test");
+  sessionGate.release();
+  await page.waitForTimeout(50);
+  await expect(page.locator("[data-authenticated]")).toBeVisible();
+});
+
+test("leaving a changed schedule form asks before discarding it", async ({ page }) => {
+  await mockApi(page);
+  await page.goto("/");
+  await login(page);
+  await navigate(page, "create");
+  await page.locator('[data-schedule-form] [name="title"]').fill("미저장 일정");
+  page.once("dialog", (dialog) => dialog.dismiss());
+  await navigate(page, "settings");
+  await expect(page).toHaveURL(/#create$/);
+  await expect(page.locator('[data-schedule-form] [name="title"]')).toHaveValue("미저장 일정");
+  page.once("dialog", (dialog) => dialog.accept());
+  await navigate(page, "settings");
+  await expect(page).toHaveURL(/#settings$/);
 });
 
 test("AI candidates require confirmation and only failed saves retry with the same key", async ({ page }) => {
@@ -803,6 +926,29 @@ test("schedule period uses an inclusive local end date and keeps dashboard data"
   await expect(page.locator("[data-view]")).toContainText("기간 일정");
   await navigate(page, "dashboard");
   await expect(page.locator("[data-view]")).toContainText("기간 일정");
+});
+
+test("bounded schedule search loads the next server cursor without repeating the first page", async ({ page }) => {
+  const state = await mockApi(page);
+  state.schedules = Array.from({ length: 25 }, (_, index) => ({ id: `range-${index}`, title: `검색 대상 ${index}`, location: "회의실", start_at: `2030-01-${String(index + 1).padStart(2, "0")}T09:00:00Z`, status: "confirmed" }));
+  await page.goto("/");
+  await login(page);
+  await navigate(page, "schedules");
+  const form = page.locator("[data-period-form]");
+  await form.locator('[name="from"]').fill("2030-01-01");
+  await form.locator('[name="to"]').fill("2030-01-31");
+  await form.locator('[name="q"]').fill("검색 대상");
+  await form.locator('[name="status"]').selectOption("confirmed");
+  await form.locator("button[type=submit]").click();
+  await expect(page.locator("[data-view] [data-load-more]")).toBeVisible();
+  await expect(page.locator("[data-view]")).toContainText("검색 대상 0");
+  await page.locator("[data-load-more]").click();
+  await expect(page.locator("[data-view]")).toContainText("검색 대상 24");
+  await expect(page.locator("[data-detail-id]")).toHaveCount(25);
+  const pagedCalls = state.calls.filter((call) => call.method === "GET" && call.path.endsWith("/schedules") && new URLSearchParams(call.query).has("limit"));
+  expect(pagedCalls).toHaveLength(2);
+  expect(new URLSearchParams(pagedCalls[0].query).get("q")).toBe("검색 대상");
+  expect(new URLSearchParams(pagedCalls[1].query).get("cursor")).toBe("20");
 });
 
 test("stable schedule pages avoid duplicates and refresh latest results", async ({ page }) => {

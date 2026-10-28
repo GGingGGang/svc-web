@@ -116,6 +116,49 @@ export class AuthClient {
     return payload;
   }
 
+  async sessionRequest(path, method = "GET", body) {
+    const accessToken = this.getAccessToken();
+    if (!accessToken) throw new Error("로그인이 필요합니다.");
+    let response;
+    try {
+      response = await this.fetchImpl(authUrl(this.config, path), {
+        method,
+        signal: AbortSignal.timeout(15000),
+        headers: { Accept: "application/json", Authorization: `Bearer ${accessToken}`, ...(body ? { "Content-Type": "application/json" } : {}) },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+    } catch {
+      throw new Error("세션 요청 결과를 확인할 수 없습니다. 연결을 확인하고 다시 시도하세요.");
+    }
+    const payload = await safeJson(response);
+    if (!response.ok) {
+      const error = new Error(`세션 요청을 완료하지 못했습니다. (HTTP ${response.status})`);
+      error.status = response.status;
+      throw error;
+    }
+    return payload;
+  }
+
+  listSessions() {
+    return this.sessionRequest("/sessions");
+  }
+
+  deleteSession(familyId) {
+    return this.sessionRequest(`/sessions/${encodeURIComponent(familyId)}`, "DELETE");
+  }
+
+  getAccount() {
+    return this.sessionRequest("/account");
+  }
+
+  updateAccount(fields) {
+    return this.sessionRequest("/account", "PATCH", fields);
+  }
+
+  changePassword(fields) {
+    return this.sessionRequest("/password/change", "POST", fields);
+  }
+
   async register(fields) {
     return this.request("/register", fields);
   }
@@ -214,6 +257,14 @@ export class ScheduleClient {
     return this.request(query.size ? `?${query}` : "").then(
       (payload) => payload.schedules ?? [],
     );
+  }
+
+  listPage({ from, to, status, q, cursor, limit = 20 } = {}) {
+    const query = new URLSearchParams({ from, to, limit: String(limit) });
+    if (status) query.set("status", status);
+    if (q) query.set("q", q);
+    if (cursor) query.set("cursor", cursor);
+    return this.request(`?${query}`).then((payload) => ({ schedules: payload.schedules ?? [], nextCursor: payload.next_cursor ?? null }));
   }
 
   get(id) {
