@@ -175,6 +175,9 @@ function settingsView(state) {
 }
 
 function init() {
+  const mailLink = location.pathname === "/account/action";
+  const actionParams = new URLSearchParams(location.hash.slice(1));
+  if (mailLink) history.replaceState(null, "", "/");
   const config = readConfig();
   const auth = new AuthClient({ config });
   const schedules = new ScheduleClient({ config, authClient: auth });
@@ -305,10 +308,10 @@ function init() {
       ? "계정을 만들어요"
       : "다시 만나서 반가워요";
     document.querySelector("[data-auth-subtitle]").textContent = register
-      ? "가입 후 바로 로그인할 수 있어요."
+      ? "가입 후 이메일 인증이 필요할 수 있어요."
       : "계속하려면 로그인하세요.";
     feedback(
-      register ? "가입 후 바로 로그인됩니다." : "API Gateway에 연결합니다.",
+      register ? "인증 메일을 받을 주소를 입력하세요." : "API Gateway에 연결합니다.",
     );
   };
   const render = () => {
@@ -972,7 +975,15 @@ function init() {
       if (!fields) return;
       setBusy(registerForm, true, "계정 만드는 중…");
       try {
-        await auth.register(fields);
+        const account = await auth.register(fields);
+        if (account.verification_required) {
+          registerForm.reset();
+          setBusy(registerForm, false);
+          setMode("login");
+          document.querySelector("[data-login-form] [name=email]").value = fields.email;
+          feedback("가입 이메일로 보낸 인증 링크를 열어주세요.");
+          return;
+        }
       } catch (error) {
         setBusy(registerForm, false);
         const invalidField = error.status === 400 && ({
@@ -1066,7 +1077,53 @@ function init() {
   );
   refreshServiceStatus();
   setInterval(refreshServiceStatus, 30000);
-  if (auth.hasSession()) openApp(true);
+  if (mailLink) {
+    setMode("login");
+    const action = actionParams.get("action");
+    const token = actionParams.get("token");
+    const resendForm = document.querySelector("[data-resend-verification]");
+    if (token && (action === "verify" || action === "email-change")) {
+      feedback("이메일을 인증하고 있어요.");
+      auth.confirmEmailVerification(token).then(
+        () => feedback("이메일 인증을 완료했습니다. 로그인하세요."),
+        (error) => {
+          feedback(error.status === 400 ? "인증 링크가 만료되었거나 이미 사용되었습니다." : error.message, "error");
+          if (error.status === 400 && action === "verify") resendForm.hidden = false;
+        },
+      );
+      resendForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        setBusy(resendForm, true, "요청 중…");
+        try {
+          await auth.requestEmailVerification(resendForm.elements.email.value.trim());
+          resendForm.hidden = true;
+          feedback("가입한 주소로 도착하는 새 인증 메일을 확인하세요.");
+        } catch (error) { feedback(error.message, "error"); }
+        finally { setBusy(resendForm, false); }
+      });
+    } else if (token && action === "reset") {
+      const form = document.querySelector("[data-reset-password]");
+      document.querySelector("[data-login-form]").hidden = true;
+      form.hidden = false;
+      feedback("새 비밀번호를 입력하세요.");
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        setBusy(form, true, "변경 중…");
+        try {
+          await auth.resetPassword(token, form.elements.new_password.value);
+          auth.clear();
+          form.reset();
+          form.hidden = true;
+          setMode("login");
+          feedback("비밀번호를 변경했습니다. 새 비밀번호로 로그인하세요.");
+        } catch (error) {
+          feedback(error.status === 400 ? "재설정 링크가 만료되었거나 이미 사용되었습니다." : error.message, "error");
+        } finally { setBusy(form, false); }
+      });
+    } else {
+      feedback("메일 링크를 확인할 수 없습니다. 메일에서 링크를 다시 열어주세요.", "error");
+    }
+  } else if (auth.hasSession()) openApp(true);
   else setMode("login");
 }
 

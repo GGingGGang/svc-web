@@ -157,6 +157,50 @@ test("auth panels, failures, logout and re-login remain usable", async ({ page }
   expect(errors).toEqual([]);
 });
 
+for (const action of ["verify", "email-change"]) {
+  test(`mailed ${action} link confirms once and removes the token`, async ({ page }) => {
+    await mockApi(page);
+    const bodies = [];
+    await page.route("**/v1/auth/email/verification/confirm", route => {
+      bodies.push(route.request().postDataJSON());
+      return route.fulfill({ json: { verified: true } });
+    });
+    await page.goto(`/account/action#token=a%2Bb%2Fc&action=${action}`);
+    await expect(page.locator("[data-auth-message]")).toContainText("이메일 인증을 완료했습니다");
+    await expect(page).toHaveURL(/\/$/);
+    await page.reload();
+    expect(bodies).toEqual([{ token: "a+b/c" }]);
+  });
+}
+
+test("expired signup link allows requesting a fresh link", async ({ page }) => {
+  await mockApi(page);
+  await page.route("**/v1/auth/email/verification/confirm", route => route.fulfill({ status: 400, json: {} }));
+  await page.route("**/v1/auth/email/verification/request", route => route.fulfill({ status: 202, json: {} }));
+  await page.goto("/account/action#token=expired&action=verify");
+  await expect(page.locator("[data-auth-message]")).toContainText("만료되었거나 이미 사용");
+  const form = page.locator("[data-resend-verification]");
+  await form.locator("input").fill("user@example.test");
+  await form.locator("button").click();
+  await expect(page.locator("[data-auth-message]")).toContainText("새 인증 메일");
+});
+
+test("mailed reset link opens the reset form and submits the token", async ({ page }) => {
+  await mockApi(page);
+  let body;
+  await page.route("**/v1/auth/password/reset", route => {
+    body = route.request().postDataJSON();
+    return route.fulfill({ json: {} });
+  });
+  await page.goto("/account/action#token=reset-token&action=reset");
+  const form = page.locator("[data-reset-password]");
+  await expect(page.locator("[data-login-form]")).toBeHidden();
+  await form.locator("input").fill("New-password-123!");
+  await form.locator("button").click();
+  await expect(page.locator("[data-auth-message]")).toContainText("비밀번호를 변경했습니다");
+  expect(body).toEqual({ token: "reset-token", new_password: "New-password-123!" });
+});
+
 test("registration and reload restore a session, expired refresh returns to login", async ({ page }) => {
   const state = await mockApi(page);
   await page.goto("/");

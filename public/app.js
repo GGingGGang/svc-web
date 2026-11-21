@@ -163,6 +163,10 @@ export class AuthClient {
     return this.request("/register", fields);
   }
 
+  confirmEmailVerification(token) { return this.request("/email/verification/confirm", { token }); }
+  requestEmailVerification(email) { return this.request("/email/verification/request", { email }); }
+  resetPassword(token, new_password) { return this.request("/password/reset", { token, new_password }); }
+
   async login(credentials) {
     const pair = await this.request("/login", credentials);
     this.saveTokenPair(pair);

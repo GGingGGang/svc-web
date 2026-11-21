@@ -79,6 +79,14 @@
                 required /></label
             ><button type="submit" class="btn btn-primary">로그인</button>
           </form>
+          <form class="auth-form" data-resend-verification hidden>
+            <label class="field">가입 이메일<input class="input" name="email" type="email" autocomplete="email" required /></label>
+            <button type="submit" class="btn btn-secondary">인증 메일 다시 받기</button>
+          </form>
+          <form class="auth-form" data-reset-password hidden>
+            <label class="field">새 비밀번호<input class="input" name="new_password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required /></label>
+            <button type="submit" class="btn btn-primary">비밀번호 재설정</button>
+          </form>
           <form class="auth-form" data-register-form novalidate hidden>
             <label class="field"
               ><span>이름</span
