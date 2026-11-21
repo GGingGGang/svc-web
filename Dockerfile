@@ -11,6 +11,7 @@ FROM docker.io/nginxinc/nginx-unprivileged:alpine
 ARG GIT_SHA=unknown
 ENV APP_VERSION=${GIT_SHA}
 USER root
+RUN apk add --no-cache 'brotli-libs>=1.2.1-r0'
 COPY nginx.conf /etc/nginx/nginx.conf
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
