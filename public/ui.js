@@ -5,7 +5,7 @@ import {
   getServiceHealth,
   readConfig,
   statusText,
-} from "./app.js";
+} from "./app.js?v=dev";
 
 const icon = (path) =>
   `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${path}"/></svg>`;
@@ -175,7 +175,7 @@ function settingsView(state) {
 }
 
 function init() {
-  const mailLink = location.pathname === "/account/action";
+  const mailLink = /^\/account\/action\/?$/.test(location.pathname);
   const actionParams = new URLSearchParams(location.hash.slice(1));
   if (mailLink) history.replaceState(null, "", "/");
   const config = readConfig();
@@ -1108,11 +1108,26 @@ function init() {
     const action = actionParams.get("action");
     const token = actionParams.get("token");
     if (token && (action === "verify" || action === "email-change")) {
+      const heading = document.querySelector("[data-auth-title]");
+      const subtitle = document.querySelector("[data-auth-subtitle]");
+      const loginForm = document.querySelector("[data-login-form]");
+      heading.textContent = "이메일 인증 중";
+      subtitle.textContent = "인증 결과를 확인하고 있습니다.";
+      loginForm.hidden = true;
       feedback("이메일을 인증하고 있어요.");
       auth.confirmEmailVerification(token).then(
-        () => feedback("이메일 인증을 완료했습니다. 로그인하세요."),
+        () => {
+          heading.textContent = "이메일 인증 완료";
+          subtitle.textContent = "이제 가입한 계정으로 로그인할 수 있어요.";
+          loginForm.hidden = false;
+          feedback("이메일 인증을 완료했습니다. 로그인하세요.");
+        },
         (error) => {
           if (error.status === 400 && action === "verify") showResendForm();
+          else {
+            heading.textContent = "이메일 인증을 완료하지 못했어요";
+            subtitle.textContent = "메일의 링크를 다시 열어주세요.";
+          }
           feedback(error.status === 400 ? "인증 링크가 만료되었거나 이미 사용되었습니다." : error.message, "error");
         },
       );
@@ -1136,7 +1151,8 @@ function init() {
         } finally { setBusy(form, false); }
       });
     } else {
-      feedback("메일 링크를 확인할 수 없습니다. 메일에서 링크를 다시 열어주세요.", "error");
+      showResendForm();
+      feedback("인증 정보가 없는 링크입니다. 메일의 전체 링크를 다시 열거나 가입 인증 메일을 새로 요청하세요.", "error");
     }
   } else if (auth.hasSession()) openApp(true);
   else setMode("login");

@@ -10,7 +10,7 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 test("static shell keeps runtime configuration external", async () => {
   const html = await readFile(join(root, "public", "index.html"), "utf8");
   assert.match(html, /runtime-config\.js/);
-  assert.match(html, /type="module" src="\/ui\.js"/);
+  assert.match(html, /type="module" src="\/ui\.js\?v=dev"/);
   assert.match(html, /data-auth-message/);
   assert.match(html, /data-view/);
   assert.doesNotMatch(html, /mini-calendar/);

@@ -29,6 +29,8 @@ esac
 
 mkdir -p /tmp/html /tmp/nginx/client_temp /tmp/nginx/proxy_temp /tmp/nginx/fastcgi_temp /tmp/nginx/uwsgi_temp /tmp/nginx/scgi_temp
 cp -R /usr/share/nginx/html/. /tmp/html/
+sed -i "s/data-web-version=\"dev\"/data-web-version=\"$APP_VERSION\"/; s|/ui.js?v=dev|/ui.js?v=$APP_VERSION|" /tmp/html/index.html
+sed -i "s|./app.js?v=dev|./app.js?v=$APP_VERSION|" /tmp/html/ui.js
 
 cat > /tmp/html/runtime-config.js <<EOF
 window.appConfig = {
@@ -38,5 +40,6 @@ window.appConfig = {
   scheduleBasePath: "$SCHEDULE_BASE_PATH"
 };
 EOF
+cat /tmp/html/mail-link-refresh.js >> /tmp/html/runtime-config.js
 
 exec nginx -c /etc/nginx/nginx.conf -g 'daemon off;'

@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { readFile } from "node:fs/promises";
 
 const apiOrigin = "https://api.example.test";
 const tokens = { access_token: "test-access", refresh_token: "test-refresh", expires_in: 3600 };
@@ -155,6 +156,35 @@ test("auth panels, failures, logout and re-login remain usable", async ({ page }
   await expect(page.locator("[data-authenticated]")).toBeVisible();
   await expect(page.locator("[data-schedule-form] [name=title]")).toHaveValue("");
   expect(errors).toEqual([]);
+});
+
+test("a cached login shell hands the mail token to the current release exactly once", async ({ page }) => {
+  const refresh = await readFile(new URL("../public/mail-link-refresh.js", import.meta.url), "utf8");
+  await page.route("**/runtime-config.js", route => route.fulfill({
+    contentType: "text/javascript",
+    body: 'window.appConfig={version:"dev",authBasePath:"/test-auth"};\n' + refresh,
+  }));
+  await page.route("**/account/action", route => route.fulfill({
+    contentType: "text/html",
+    body: '<!doctype html><script src="/runtime-config.js"></script><h1>Old login page</h1>',
+  }));
+  const calls = [];
+  await page.route("**/test-auth/email/verification/confirm", route => {
+    calls.push(route.request().postDataJSON());
+    return route.fulfill({ json: { verified: true } });
+  });
+  await page.goto("/account/action#token=cached%2Btoken&action=verify", { waitUntil: "commit" });
+  await expect(page.getByRole("heading", { name: "이메일 인증 완료" })).toBeVisible();
+  expect(calls).toEqual([{ token: "cached+token" }]);
+  await expect(page).toHaveURL(/\/$/);
+});
+
+test("an incomplete mail link shows recovery instead of a login form", async ({ page }) => {
+  await mockApi(page);
+  await page.goto("/account/action/#token=truncated");
+  await expect(page.locator("[data-login-form]")).toBeHidden();
+  await expect(page.locator("[data-auth-message]")).toContainText("인증 정보가 없는 링크");
+  await expect(page.locator("[data-resend-verification]")).toBeVisible();
 });
 
 for (const action of ["verify", "email-change"]) {
