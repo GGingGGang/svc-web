@@ -173,6 +173,24 @@ for (const action of ["verify", "email-change"]) {
   });
 }
 
+test("login exposes verification resend without an old email link or password", async ({ page }) => {
+  await mockApi(page);
+  const bodies = [];
+  await page.route("**/v1/auth/email/verification/request", route => {
+    bodies.push(route.request().postDataJSON());
+    return route.fulfill({ status: 202, json: {} });
+  });
+  await page.goto("/");
+  await page.getByRole("link", { name: "인증 메일 다시 받기" }).click();
+  await expect(page).toHaveURL(/\/account\/resend-verification$/);
+  await page.reload();
+  await expect(page.locator("[data-login-form]")).toBeHidden();
+  await page.getByLabel("가입 이메일").fill("user@example.test");
+  await page.getByRole("button", { name: "인증 메일 다시 받기" }).click();
+  await expect(page.locator("[data-auth-message]")).toContainText("새 인증 메일");
+  expect(bodies).toEqual([{ email: "user@example.test" }]);
+});
+
 test("expired signup link allows requesting a fresh link", async ({ page }) => {
   await mockApi(page);
   await page.route("**/v1/auth/email/verification/confirm", route => route.fulfill({ status: 400, json: {} }));

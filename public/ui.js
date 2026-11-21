@@ -295,8 +295,10 @@ function init() {
     menuButton.setAttribute("aria-expanded", String(open));
     if (open) sidebar.querySelector("[data-route]").focus();
   };
+  const resendForm = document.querySelector("[data-resend-verification]");
   const setMode = (mode) => {
     const register = mode === "register";
+    resendForm.hidden = true;
     document.querySelector("[data-login-form]").hidden = register;
     document.querySelector("[data-register-form]").hidden = !register;
     document.querySelectorAll("[data-auth-mode]").forEach((button) => {
@@ -1077,30 +1079,43 @@ function init() {
   );
   refreshServiceStatus();
   setInterval(refreshServiceStatus, 30000);
-  if (mailLink) {
+  const showResendForm = () => {
+    setMode("login");
+    document.querySelector("[data-login-form]").hidden = true;
+    document.querySelector("[data-auth-title]").textContent = "인증 메일 다시 받기";
+    document.querySelector("[data-auth-subtitle]").textContent = "가입할 때 사용한 이메일 주소를 입력하세요.";
+    resendForm.hidden = false;
+    resendForm.elements.email.focus();
+  };
+  resendForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (resendForm.querySelector("button[type=submit]").disabled) return;
+    setBusy(resendForm, true, "요청 중…");
+    try {
+      await auth.requestEmailVerification(resendForm.elements.email.value.trim());
+      resendForm.reset();
+      setMode("login");
+      history.replaceState(null, "", "/");
+      feedback("가입한 주소로 도착하는 새 인증 메일을 확인하세요.");
+    } catch (error) { feedback(error.message, "error"); }
+    finally { setBusy(resendForm, false); }
+  });
+  if (location.pathname === "/account/resend-verification") {
+    showResendForm();
+    feedback("새 인증 메일을 요청하면 이전 링크는 만료됩니다.");
+  } else if (mailLink) {
     setMode("login");
     const action = actionParams.get("action");
     const token = actionParams.get("token");
-    const resendForm = document.querySelector("[data-resend-verification]");
     if (token && (action === "verify" || action === "email-change")) {
       feedback("이메일을 인증하고 있어요.");
       auth.confirmEmailVerification(token).then(
         () => feedback("이메일 인증을 완료했습니다. 로그인하세요."),
         (error) => {
+          if (error.status === 400 && action === "verify") showResendForm();
           feedback(error.status === 400 ? "인증 링크가 만료되었거나 이미 사용되었습니다." : error.message, "error");
-          if (error.status === 400 && action === "verify") resendForm.hidden = false;
         },
       );
-      resendForm.addEventListener("submit", async (event) => {
-        event.preventDefault();
-        setBusy(resendForm, true, "요청 중…");
-        try {
-          await auth.requestEmailVerification(resendForm.elements.email.value.trim());
-          resendForm.hidden = true;
-          feedback("가입한 주소로 도착하는 새 인증 메일을 확인하세요.");
-        } catch (error) { feedback(error.message, "error"); }
-        finally { setBusy(resendForm, false); }
-      });
     } else if (token && action === "reset") {
       const form = document.querySelector("[data-reset-password]");
       document.querySelector("[data-login-form]").hidden = true;
