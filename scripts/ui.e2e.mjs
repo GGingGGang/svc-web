@@ -5,7 +5,10 @@ const apiOrigin = "https://api.example.test";
 const tokens = { access_token: "test-access", refresh_token: "test-refresh", expires_in: 3600 };
 
 // No account or schedule is written to a real service by these browser checks.
+const testToday = new Date(2029, 11, 31, 9);
+
 async function mockApi(page) {
+  await page.clock.setFixedTime(testToday);
   const state = { loginStatus: 200, registerStatus: 201, registerMessage: "Invalid email", refreshStatus: 200, listStatus: 200, requestId: null, serviceStatus: { schedules: "available", followup: "available" }, saveStatus: 201, saveResponseLost: false, createResults: new Map(), failTitle: null, extractStatus: 200, extractErrorCode: "extraction_failed", extractCandidates: [], extractGate: null, extractTruncated: false, updateStatus: 200, deleteStatus: 204, deleteGate: null, detailGate: null, detailStatus: 200, reminderStatus: 201, reminderGate: null, accountPatchGate: null, passwordChangeGate: null, sessionDeleteGate: null, reminders: [], sessions: [{ family_id: "session-a", created_at: "2026-01-01T00:00:00Z", last_active_at: "2026-01-02T00:00:00Z" }], account: { id: "test-user", email: "browser@example.test", display_name: "Test User", timezone: "Asia/Seoul" }, schedules: [], calls: [] };
   await page.route("**/*", async (route) => {
     const request = route.request();
@@ -49,17 +52,17 @@ async function mockApi(page) {
       if (method === "GET") {
         if (state.listStatus === 0) return route.abort("failed");
         const params = url.searchParams;
-        if (params.has("limit")) {
+        if (params.has("from") && params.has("to")) {
           const from = Date.parse(params.get("from"));
           const to = Date.parse(params.get("to"));
           const filtered = state.schedules.filter((item) => Date.parse(item.start_at) >= from && Date.parse(item.start_at) < to && (!params.has("status") || item.status === params.get("status")) && (!params.has("q") || `${item.title} ${item.location || ""}`.toLocaleLowerCase().includes(params.get("q").toLocaleLowerCase())));
           const offset = Number(params.get("cursor") || 0);
-          const limit = Number(params.get("limit"));
+          const limit = Number(params.get("limit") || 20);
           const schedules = filtered.slice(offset, offset + limit);
           const next_cursor = offset + schedules.length < filtered.length ? String(offset + schedules.length) : null;
-          return route.fulfill({ status: state.listStatus, json: { schedules, next_cursor } });
+          return route.fulfill({ status: state.listStatus, headers: state.requestId ? { "X-Request-ID": state.requestId, "Access-Control-Expose-Headers": "X-Request-ID" } : {}, json: { schedules, next_cursor } });
         }
-        return route.fulfill({ status: state.listStatus, headers: state.requestId ? { "X-Request-ID": state.requestId, "Access-Control-Expose-Headers": "X-Request-ID" } : {}, json: { schedules: state.schedules } });
+        return route.fulfill({ status: 400, json: { error: "from and to are required" } });
       }
       if (method === "POST") {
         if (state.saveStatus !== 201 || body.title === state.failTitle) return route.fulfill({ status: state.saveStatus !== 201 ? state.saveStatus : 503, json: { error: "unavailable" } });
@@ -317,8 +320,8 @@ test("registration validates fields before request and keeps successful account 
 test("list retry and failed save preserve input, successful save renders escaped data", async ({ page }, testInfo) => {
   const state = await mockApi(page);
   state.schedules = [
-    { id: "past", title: "지난 일정", start_at: "2020-06-15T05:30:00Z", location: "온라인", status: "confirmed" },
-    { id: "future", title: "프로젝트 회고", start_at: "2099-06-15T05:30:00Z", location: "회의실", status: "confirmed" }
+    { id: "past", title: "지난 일정", start_at: "2029-12-15T05:30:00Z", location: "온라인", status: "confirmed" },
+    { id: "future", title: "프로젝트 회고", start_at: "2030-06-15T05:30:00Z", location: "회의실", status: "confirmed" }
   ];
   state.listStatus = 503;
   await page.goto("/");
@@ -333,7 +336,7 @@ test("list retry and failed save preserve input, successful save renders escaped
   await navigate(page, "schedules");
   await page.locator("[data-toggle-past]").click();
   await expect(page.locator("[data-view]")).toContainText("지난 일정");
-  expect(state.calls.findLast((call) => call.method === "GET" && call.path.endsWith("/schedules")).query).toBe("");
+  expect(new URLSearchParams(state.calls.findLast((call) => call.method === "GET" && call.path.endsWith("/schedules")).query).has("from")).toBe(true);
   await navigate(page, "create");
   const form = page.locator("[data-schedule-form]");
   const title = '<img src=x onerror="alert(1)"> 회의';
@@ -409,7 +412,7 @@ test("service status distinguishes followup delay from unavailable schedules", a
 
 test("schedule deletion confirms the title and waits for the server", async ({ page }) => {
   const state = await mockApi(page);
-  state.schedules = [{ id: "future", title: "프로젝트 회고", start_at: "2099-06-15T05:30:00Z", status: "confirmed" }];
+  state.schedules = [{ id: "future", title: "프로젝트 회고", start_at: "2030-06-15T05:30:00Z", status: "confirmed" }];
   page.on("dialog", async (dialog) => {
     expect(dialog.message()).toContain("프로젝트 회고");
     expect(dialog.message()).toContain("복구할 수 없습니다");
@@ -452,7 +455,7 @@ test("core schedule actions work by keyboard and detail returns focus", async ({
   await navigate(page, "create");
   const form = page.locator("[data-schedule-form]");
   await form.getByLabel("제목").fill("키보드 일정");
-  await form.getByLabel("시작 시간").fill("2099-06-15T14:30");
+  await form.getByLabel("시작 시간").fill("2030-06-15T14:30");
   await form.locator("button[type=submit]").focus();
   await page.keyboard.press("Enter");
   await expect(page.locator("[data-view]")).toContainText("키보드 일정");
@@ -477,7 +480,7 @@ test("core schedule actions work by keyboard and detail returns focus", async ({
 
 test("schedule edit preserves fields on failure and updates only after success", async ({ page }) => {
   const state = await mockApi(page);
-  state.schedules = [{ id: "future", title: "프로젝트 회고", start_at: "2099-06-15T05:30:00Z", location: "회의실", description: "기존 메모", status: "confirmed", all_day: false }];
+  state.schedules = [{ id: "future", title: "프로젝트 회고", start_at: "2030-06-15T05:30:00Z", location: "회의실", description: "기존 메모", status: "confirmed", all_day: false }];
   await page.goto("/");
   await login(page);
   await navigate(page, "schedules");
@@ -901,12 +904,12 @@ test("past schedule can be recorded without promising a new reminder delivery", 
   const form = page.locator("[data-schedule-form]");
   await expect(page.locator("[data-view]")).toContainText("실제 발송 알림은 현재 지원하지 않습니다");
   await form.locator("[name=title]").fill("지난 기록");
-  await form.locator("[name=start_at]").fill("2020-01-02T09:00");
+  await form.locator("[name=start_at]").fill("2029-12-02T09:00");
   await form.locator("[name=reminder_minutes]").fill("10");
   await form.locator("button[type=submit]").click();
   await expect(page).toHaveURL(/#schedules$/);
   const create = state.calls.find((call) => call.method === "POST" && call.path === "/v1/core/schedules");
-  expect(new Date(create.body.start_at).getTime()).toBeLessThan(Date.now());
+  expect(new Date(create.body.start_at).getTime()).toBeLessThan(testToday.getTime());
   expect(create.body.reminders).toEqual([{ minutes_before: 10, channel: "none" }]);
   await page.locator("[data-toggle-past]").click();
   await expect(page.locator("[data-view]")).toContainText("지난 기록");
@@ -933,7 +936,7 @@ test("logout discards a late detail response", async ({ page }) => {
 
 test("inaccessible detail removes private list content", async ({ page }) => {
   const state = await mockApi(page);
-  state.schedules = [{ id: "inaccessible", title: "비공개 상세", start_at: "2099-01-01T09:00:00Z", status: "confirmed" }];
+  state.schedules = [{ id: "inaccessible", title: "비공개 상세", start_at: "2030-01-01T09:00:00Z", status: "confirmed" }];
   await page.goto("/");
   await login(page);
   await navigate(page, "schedules");
@@ -947,7 +950,7 @@ test("inaccessible detail removes private list content", async ({ page }) => {
 test("deleted detail closes when a reminder action returns 404", async ({ page }) => {
   const state = await mockApi(page);
   state.reminderStatus = 404;
-  state.schedules = [{ id: "removed", title: "삭제된 비공개 일정", start_at: "2099-01-01T09:00:00Z", status: "confirmed" }];
+  state.schedules = [{ id: "removed", title: "삭제된 비공개 일정", start_at: "2030-01-01T09:00:00Z", status: "confirmed" }];
   await page.goto("/");
   await login(page);
   await navigate(page, "schedules");
@@ -961,7 +964,7 @@ test("deleted detail closes when a reminder action returns 404", async ({ page }
 
 test("reminder action shows progress and restores its button after failure", async ({ page }) => {
   const state = await mockApi(page);
-  state.schedules = [{ id: "reminder", title: "리마인더 일정", start_at: "2099-01-01T09:00:00Z", status: "confirmed" }];
+  state.schedules = [{ id: "reminder", title: "리마인더 일정", start_at: "2030-01-01T09:00:00Z", status: "confirmed" }];
   state.reminderStatus = 503;
   let releaseReminder;
   state.reminderGate = new Promise((resolve) => { releaseReminder = resolve; });
@@ -984,7 +987,7 @@ test("reminder action shows progress and restores its button after failure", asy
 
 test("logout discards a late delete response", async ({ page }) => {
   const state = await mockApi(page);
-  state.schedules = [{ id: "late-delete", title: "첫 계정 일정", start_at: "2099-01-01T09:00:00Z", status: "confirmed" }];
+  state.schedules = [{ id: "late-delete", title: "첫 계정 일정", start_at: "2030-01-01T09:00:00Z", status: "confirmed" }];
   let releaseDelete;
   state.deleteGate = new Promise((resolve) => { releaseDelete = resolve; });
   await page.goto("/");
@@ -1012,7 +1015,7 @@ test("schedule period uses an inclusive local end date and keeps dashboard data"
   await form.locator("[name=from]").fill("2030-01-01");
   await form.locator("[name=to]").fill("2030-01-02");
   await form.locator("button[type=submit]").click();
-  await expect.poll(() => state.calls.findLast((call) => call.method === "GET" && call.path.endsWith("/schedules"))?.query).toContain("from=");
+  await expect.poll(() => state.calls.findLast((call) => call.method === "GET" && call.path.endsWith("/schedules"))?.query).toContain("limit=20");
   const query = new URLSearchParams(state.calls.findLast((call) => call.method === "GET" && call.path.endsWith("/schedules")).query);
   expect(new Date(query.get("to")).getTime() - new Date(query.get("from")).getTime()).toBe(2 * 86400000);
   await expect(page.locator("[data-view]")).toContainText("기간 일정");
@@ -1037,7 +1040,7 @@ test("bounded schedule search loads the next server cursor without repeating the
   await page.locator("[data-load-more]").click();
   await expect(page.locator("[data-view]")).toContainText("검색 대상 24");
   await expect(page.locator("[data-detail-id]")).toHaveCount(25);
-  const pagedCalls = state.calls.filter((call) => call.method === "GET" && call.path.endsWith("/schedules") && new URLSearchParams(call.query).has("limit"));
+  const pagedCalls = state.calls.filter((call) => call.method === "GET" && call.path.endsWith("/schedules") && new URLSearchParams(call.query).get("limit") === "20");
   expect(pagedCalls).toHaveLength(2);
   expect(new URLSearchParams(pagedCalls[0].query).get("q")).toBe("검색 대상");
   expect(new URLSearchParams(pagedCalls[1].query).get("cursor")).toBe("20");
@@ -1074,7 +1077,7 @@ test("changing display timezone leaves stored instants unchanged", async ({ page
 
 test("dashboard counts real owned schedules and excludes cancelled entries", async ({ page }) => {
   const state = await mockApi(page);
-  const today = new Date();
+  const today = testToday;
   const todayAtNoon = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 12);
   const tomorrow = new Date(todayAtNoon);
   tomorrow.setDate(tomorrow.getDate() + 1);

@@ -253,14 +253,23 @@ export class ScheduleClient {
     return response.status === 204 ? null : response.json();
   }
 
-  list({ from, to, status } = {}) {
-    const query = new URLSearchParams();
-    if (from) query.set("from", from);
-    if (to) query.set("to", to);
-    if (status) query.set("status", status);
-    return this.request(query.size ? `?${query}` : "").then(
-      (payload) => payload.schedules ?? [],
-    );
+  async list({ from, to, status } = {}) {
+    const today = new Date();
+    const midnight = (offset) => new Date(today.getFullYear(), today.getMonth(), today.getDate() + offset).toISOString();
+    const range = { from: from ?? midnight(-180), to: to ?? midnight(181), status, limit: 100 };
+    const sessionVersion = this.authClient?.sessionVersion;
+    const items = [];
+    const cursors = new Set();
+    let cursor;
+    do {
+      const page = await this.listPage({ ...range, cursor });
+      if (this.authClient?.sessionVersion !== sessionVersion) throw new Error("Session changed during schedule lookup.");
+      items.push(...page.schedules);
+      cursor = page.nextCursor;
+      if (cursor && cursors.has(cursor)) throw new Error("Repeated schedule page cursor.");
+      cursors.add(cursor);
+    } while (cursor);
+    return items;
   }
 
   listPage({ from, to, status, q, cursor, limit = 20 } = {}) {

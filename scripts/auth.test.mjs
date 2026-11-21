@@ -145,10 +145,22 @@ test("schedule client follows the core schedule contract with bearer auth", asyn
   const calls = [];
   const schedules = new ScheduleClient({ authClient: auth, fetchImpl: async (url, options) => {
     calls.push({ url, options });
-    return new Response(JSON.stringify({ schedules: [] }), { status: 200 });
+    return Response.json(calls.length === 1
+      ? { schedules: [{ id: "first" }], next_cursor: "page/2" }
+      : { schedules: [{ id: "second" }], next_cursor: null });
   } });
-  assert.deepEqual(await schedules.list({ status: "confirmed" }), []);
-  assert.equal(calls[0].url, "https://api.ggang.cloud/v1/core/schedules?status=confirmed");
+  assert.deepEqual(await schedules.list({ status: "confirmed" }), [{ id: "first" }, { id: "second" }]);
+  const first = new URL(calls[0].url);
+  const second = new URL(calls[1].url);
+  assert.equal(first.origin + first.pathname, "https://api.ggang.cloud/v1/core/schedules");
+  const from = Date.parse(first.searchParams.get("from"));
+  const to = Date.parse(first.searchParams.get("to"));
+  assert.ok(from <= Date.now() && Date.now() < to && to - from <= 366 * 86400000);
+  assert.equal(first.searchParams.get("status"), "confirmed");
+  assert.equal(first.searchParams.get("limit"), "100");
+  assert.equal(second.searchParams.get("cursor"), "page/2");
+  second.searchParams.delete("cursor");
+  assert.equal(second.href, first.href);
   assert.equal(calls[0].options.headers.Authorization, "Bearer access-1");
 });
 
